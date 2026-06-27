@@ -1,0 +1,60 @@
+network:
+  num_nodes: 20
+  topology_type: "hierarchical"
+  link_bandwidth_mbps: 100
+  base_delay_ms: 10
+
+carbon:
+  update_interval_seconds: 3600
+  profiles:
+    solar_heavy:
+      type: "solar"
+      base_intensity: 250
+    wind_heavy:
+      type: "wind"
+      base_intensity: 280
+    coal_heavy:
+      type: "coal"
+      base_intensity: 400
+    nuclear:
+      type: "nuclear"
+      base_intensity: 300
+    mixed_grid:
+      type: "mixed"
+      base_intensity: 350
+
+simulation:
+  duration_hours: 24
+  time_step_seconds: 1.0
+  control_interval_seconds: 3600
+  random_seed: 42
+
+gnn:
+  model_type: "GAT"
+  node_features: 7
+  edge_features: 3
+  hidden_dim: 128
+  num_layers: 3
+  num_heads: 4
+  dropout: 0.1
+  learning_rate: 0.001
+  weight_decay: 0.00001
+
+training:
+  epochs: 100
+  batch_size: 32
+  validation_split: 0.2
+  early_stopping_patience: 15
+
+loss:
+  carbon_weight: 1.0
+  latency_weight: 0.3
+  qos_weight: 0.2
+
+output:
+  save_results: true
+  results_dir: "results"
+  plot_format: "png"
+  plot_dpi: 300
+  export_csv: true
+  generate_report: true

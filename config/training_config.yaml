@@ -1,0 +1,26 @@
+# Training Configuration for Carbon-Aware GNN Model
+
+training:
+  epochs: 200
+  batch_size: 32
+  learning_rate: 0.001
+  early_stopping_patience: 20
+  scheduler_patience: 10
+  
+model:
+  hidden_dim: 128
+  num_layers: 3
+  num_heads: 4
+  dropout: 0.2
+
+data_generation:
+  num_train_samples: 1000
+  num_val_samples: 200
+  num_test_samples: 200
+  min_nodes: 10
+  max_nodes: 30
+  
+loss_weights:
+  carbon: 1.0
+  latency: 0.1
+  qos: 0.1
