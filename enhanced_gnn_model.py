@@ -321,7 +321,7 @@ if __name__ == "__main__":
     print("Enhanced Carbon-Aware GAT Model")
     print("=" * 50)
     
-    node_feat = 7
+    node_feat = 13
     edge_feat = 3
     
     model = CarbonAwareGAT(node_feat, edge_feat, hidden_dim=128, num_layers=3, num_heads=4)

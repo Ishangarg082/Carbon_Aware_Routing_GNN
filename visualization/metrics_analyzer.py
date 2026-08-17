@@ -53,39 +53,93 @@ class MetricsAnalyzer:
         }
         
         if min_len > 1:
-            t_stat, p_value = stats.ttest_ind(ca_carbon[:min_len], bl_carbon[:min_len])
-            
-            # Cohen's d effect size
-            pooled_std = np.sqrt((np.std(ca_carbon[:min_len])**2 + np.std(bl_carbon[:min_len])**2) / 2)
-            cohens_d = (np.mean(bl_carbon[:min_len]) - np.mean(ca_carbon[:min_len])) / pooled_std if pooled_std > 0 else 0
-            
-            # Effect size interpretation
-            if abs(cohens_d) < 0.2:
+            # Welch's t-test (does not assume equal variances)
+            t_stat, p_value = stats.ttest_ind(
+                ca_carbon[:min_len], bl_carbon[:min_len], equal_var=False
+            )
+
+            # ── Cohen's d (independent-samples, Hedges pooled-SD formula) ────────
+            # NOTE: These n samples are autocorrelated hourly intervals from a
+            # single 48-h run, NOT independent trials.  This d is descriptive
+            # only.  The statistically valid between-run d comes from the
+            # multi-seed analysis (run_multi_seed_experiment.py).
+            n1 = min_len
+            n2 = min_len
+            std1 = np.std(ca_carbon[:min_len], ddof=1)  # sample SD (ddof=1)
+            std2 = np.std(bl_carbon[:min_len], ddof=1)
+            # Pooled SD: sqrt[((n1-1)*s1^2 + (n2-1)*s2^2) / (n1+n2-2)]
+            pooled_std = np.sqrt(
+                ((n1 - 1) * std1 ** 2 + (n2 - 1) * std2 ** 2)
+                / (n1 + n2 - 2)
+            )
+            cohens_d = (
+                (np.mean(bl_carbon[:min_len]) - np.mean(ca_carbon[:min_len]))
+                / pooled_std
+                if pooled_std > 0 else 0
+            )
+
+            # Sawilowsky (2009) extended thresholds
+            #   < 0.10 → Negligible
+            #   0.10–0.20 → Very Small
+            #   0.20–0.50 → Small
+            #   0.50–0.80 → Medium
+            #   0.80–1.20 → Large
+            #   1.20–2.00 → Very Large
+            #   ≥ 2.00    → Huge
+            ad = abs(cohens_d)
+            if ad < 0.10:
                 effect_label = 'Negligible'
-            elif abs(cohens_d) < 0.5:
+            elif ad < 0.20:
+                effect_label = 'Very Small'
+            elif ad < 0.50:
                 effect_label = 'Small'
-            elif abs(cohens_d) < 0.8:
+            elif ad < 0.80:
                 effect_label = 'Medium'
-            else:
+            elif ad < 1.20:
                 effect_label = 'Large'
-            
+            elif ad < 2.00:
+                effect_label = 'Very Large'
+            else:
+                effect_label = 'Huge'
+
             stats_dict['significance'] = {
                 't_statistic': t_stat,
                 'p_value': p_value,
                 'significant': p_value < 0.05,
                 'cohens_d': cohens_d,
-                'effect_size': effect_label
+                'effect_size': effect_label,
+                # Flag so callers know this is the single-run descriptive d
+                'cohens_d_note': (
+                    'Descriptive only (autocorrelated hourly intervals). '
+                    'See multi-seed analysis for valid between-run Cohen\'s d.'
+                ),
             }
-            
-            # Confidence interval for mean difference (95%)
+
+            # Welch 95% CI for mean difference
             mean_diff = np.mean(bl_carbon[:min_len]) - np.mean(ca_carbon[:min_len])
-            se_diff = np.sqrt(np.var(ca_carbon[:min_len])/min_len + np.var(bl_carbon[:min_len])/min_len)
-            ci_95 = (mean_diff - 1.96 * se_diff, mean_diff + 1.96 * se_diff)
+            se_diff = np.sqrt(
+                np.var(ca_carbon[:min_len], ddof=1) / min_len
+                + np.var(bl_carbon[:min_len], ddof=1) / min_len
+            )
+            # Use t critical value (df approximation via scipy)
+            df_welch = (
+                (std1 ** 2 / n1 + std2 ** 2 / n2) ** 2
+                / (
+                    (std1 ** 2 / n1) ** 2 / (n1 - 1)
+                    + (std2 ** 2 / n2) ** 2 / (n2 - 1)
+                )
+            )
+            t_crit = stats.t.ppf(0.975, df=df_welch)
+            ci_95 = (
+                mean_diff - t_crit * se_diff,
+                mean_diff + t_crit * se_diff,
+            )
             stats_dict['confidence_interval'] = {
                 'mean_difference': mean_diff,
                 'ci_lower': ci_95[0],
                 'ci_upper': ci_95[1],
-                'confidence_level': 0.95
+                'confidence_level': 0.95,
+                'df_welch': df_welch,
             }
         
         return stats_dict
@@ -551,11 +605,16 @@ class MetricsAnalyzer:
             sig = statistics['significance']
             report.append(f"\n  Welch's t-test:     t = {sig['t_statistic']:.4f}, p = {sig['p_value']:.4e}")
             report.append(f"  Significant:        {'Yes (p < 0.05)' if sig['significant'] else 'No (p >= 0.05)'}")
-            report.append(f"  Cohen's d:          {sig['cohens_d']:.4f} ({sig['effect_size']} effect)")
-        
+            report.append(f"  Cohen's d:          {sig['cohens_d']:.4f} ({sig['effect_size']} effect, Sawilowsky 2009)")
+            report.append(f"  [NOTE] d above is over autocorrelated hourly intervals (single run).")
+            report.append(f"         For the between-run (i.i.d.) d, see multi_seed_report.md.")
+
         if 'confidence_interval' in statistics:
             ci = statistics['confidence_interval']
-            report.append(f"  95% CI for diff:    [{ci['ci_lower']:.2f}, {ci['ci_upper']:.2f}] gCO2")
+            report.append(
+                f"  95% CI for diff:    [{ci['ci_lower']:.2f}, {ci['ci_upper']:.2f}] gCO2"
+                f"  (Welch, df≈{ci.get('df_welch', 0):.0f})"
+            )
         
         # ── Section 3: Temporal Adaptability ──
         report.append("\n3. TEMPORAL ADAPTABILITY")

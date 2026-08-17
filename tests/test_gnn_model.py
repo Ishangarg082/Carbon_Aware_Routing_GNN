@@ -32,9 +32,9 @@ def test_gat_model():
     print("="*50)
     
     model = CarbonAwareGAT(
-        node_features=7,
+        node_features=13,
         edge_features=3,
-        hidden_dim=64,
+        hidden_dim=32,
         num_layers=2,
         num_heads=4
     )
@@ -42,7 +42,7 @@ def test_gat_model():
     num_nodes = 10
     num_edges = 20
     
-    x = torch.randn(num_nodes, 7)
+    x = torch.randn(num_nodes, 13)
     edge_index = torch.randint(0, num_nodes, (2, num_edges))
     edge_attr = torch.randn(num_edges, 3)
     timestamp = torch.tensor(43200.0)
@@ -70,13 +70,13 @@ def test_graph_creation():
     num_nodes = 5
     num_edges = 8
     
-    node_features = np.random.randn(num_nodes, 7)
+    node_features = np.random.randn(num_nodes, 13)
     edge_index = np.random.randint(0, num_nodes, (2, num_edges))
     edge_features = np.random.randn(num_edges, 3)
     
     graph = create_graph_from_network_state(node_features, edge_index, edge_features)
     
-    assert graph.x.shape == (num_nodes, 7), "Node features shape mismatch"
+    assert graph.x.shape == (num_nodes, 13), "Node features shape mismatch"
     assert graph.edge_index.shape == (2, num_edges), "Edge index shape mismatch"
     assert graph.edge_attr.shape == (num_edges, 3), "Edge features shape mismatch"
     
@@ -92,10 +92,10 @@ def test_model_forward_backward():
     print("Testing Model Training Loop")
     print("="*50)
     
-    model = CarbonAwareGAT(node_features=7, edge_features=3, hidden_dim=32, num_layers=2)
+    model = CarbonAwareGAT(node_features=13, edge_features=3, hidden_dim=32, num_layers=2)
     optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
     
-    x = torch.randn(10, 7)
+    x = torch.randn(10, 13)
     edge_index = torch.randint(0, 10, (2, 15))
     edge_attr = torch.randn(15, 3)
     timestamp = torch.tensor(0.0)

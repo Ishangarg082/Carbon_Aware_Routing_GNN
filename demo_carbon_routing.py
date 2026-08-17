@@ -254,6 +254,8 @@ def main():
     import matplotlib
     matplotlib.use('Agg')
     import matplotlib.pyplot as plt
+    plt.rcParams['axes.unicode_minus'] = False
+    plt.rcParams['font.family'] = 'DejaVu Sans'
     
     BG = '#ffffff'
     CARD = '#ffffff'
@@ -274,7 +276,7 @@ def main():
         ax.spines['left'].set_color(BORDER)
         ax.spines['top'].set_visible(False)
         ax.spines['right'].set_visible(False)
-        ax.set_title(title, fontsize=11, fontweight='600', color=TXT, pad=10, loc='left')
+        ax.set_title(title, fontsize=11, fontweight='bold', color=TXT, pad=10, loc='left')
     
     carbon_intensities = [G.nodes[n]['carbon_intensity'] for n in G.nodes()]
     baseline_per_flow = baseline_carbon / len(traffic_flows)
@@ -294,7 +296,7 @@ def main():
     for bar in bars:
         h = bar.get_height()
         ax.text(bar.get_x() + bar.get_width()/2., h,
-                f'{h:.1f}', ha='center', va='bottom', fontsize=9, fontweight='600', color=TXT)
+                f'{h:.1f}', ha='center', va='bottom', fontsize=9, fontweight='bold', color=TXT)
     plt.tight_layout()
     plt.savefig('results/01_total_emissions.png', dpi=150, bbox_inches='tight', facecolor=BG)
     plt.close()
@@ -312,7 +314,7 @@ def main():
     for i, (lbl, val) in enumerate(zip(labels, reductions)):
         ax.text(val + 0.3 if val > 0 else val - 0.3, i,
                 f'{val:+.2f}%', ha='left' if val > 0 else 'right', va='center',
-                fontsize=10, fontweight='600', color=colors_r[i])
+                fontsize=10, fontweight='bold', color=colors_r[i])
     plt.tight_layout()
     plt.savefig('results/02_reduction_pct.png', dpi=150, bbox_inches='tight', facecolor=BG)
     plt.close()
@@ -328,7 +330,7 @@ def main():
     for bar in bars3:
         h = bar.get_height()
         ax.text(bar.get_x() + bar.get_width()/2., h,
-                f'{h:.2f}', ha='center', va='bottom', fontsize=9, fontweight='500', color=TXT)
+                f'{h:.2f}', ha='center', va='bottom', fontsize=9, fontweight='normal', color=TXT)
     plt.tight_layout()
     plt.savefig('results/03_avg_carbon_per_flow.png', dpi=150, bbox_inches='tight', facecolor=BG)
     plt.close()
@@ -355,7 +357,7 @@ def main():
     ax.set_ylim([0, max(3, carbon_aware_hops + 1)])
     ax.grid(axis='y', alpha=0.15, color=BORDER)
     ax.text(0, carbon_aware_hops, f'{carbon_aware_hops:.2f}',
-            ha='center', va='bottom', fontsize=11, fontweight='600', color=TXT)
+            ha='center', va='bottom', fontsize=11, fontweight='bold', color=TXT)
     plt.tight_layout()
     plt.savefig('results/05_routing_path_length.png', dpi=150, bbox_inches='tight', facecolor=BG)
     plt.close()
@@ -390,12 +392,12 @@ def main():
     y = 0.95
     for label, value in info_lines:
         if label in ('NETWORK', 'CARBON COMPARISON', 'ROUTING', 'INTENSITY'):
-            ax.text(0.08, y, label, fontsize=8, fontweight='600', color=TXT_M,
+            ax.text(0.08, y, label, fontsize=8, fontweight='bold', color=TXT_M,
                     transform=ax.transAxes, family='sans-serif')
         elif label:
             ax.text(0.08, y, label, fontsize=9, color=TXT2,
                     transform=ax.transAxes, family='sans-serif')
-            ax.text(0.92, y, value, fontsize=9, color=TXT, fontweight='500',
+            ax.text(0.92, y, value, fontsize=9, color=TXT, fontweight='normal',
                     transform=ax.transAxes, ha='right', family='sans-serif')
         y -= 0.048
     plt.tight_layout()

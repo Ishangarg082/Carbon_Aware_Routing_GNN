@@ -1,4 +1,7 @@
 import matplotlib.pyplot as plt
+import matplotlib
+plt.rcParams['axes.unicode_minus'] = False
+plt.rcParams['font.family'] = 'DejaVu Sans'
 import matplotlib.animation as animation
 import networkx as nx
 import numpy as np

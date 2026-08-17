@@ -17,7 +17,7 @@ We train a model on real network routing data (`carbon_network_data.csv`), and v
 
 - Python 3.8 or higher
 - PyTorch 2.0+
-- For NS-3 simulation: WSL (Ubuntu) with ns-3.41 installed
+- For NS-3 simulation: WSL (Ubuntu) with ns-3.48 installed
 
 ### Setup
 
@@ -63,15 +63,15 @@ bash setup_ns3_wsl.sh
 Then set up the environment variables (or add them to `~/.bashrc`):
 
 ```bash
-export PATH=~/ns3-venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-export PYTHONPATH=~/ns-allinone-3.41/ns-3.41/build/bindings/python:$PYTHONPATH
-export LD_LIBRARY_PATH=~/ns-allinone-3.41/ns-3.41/build/lib:$LD_LIBRARY_PATH
+export PATH=~/ns-allinone-3.48/ns-3.48/ns3-venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+export PYTHONPATH=~/ns-allinone-3.48/ns-3.48/build/bindings/python:$PYTHONPATH
+export LD_LIBRARY_PATH=~/ns-allinone-3.48/ns-3.48/build/lib:$LD_LIBRARY_PATH
 ```
 
 Install dependencies in WSL:
 
 ```bash
-source ~/ns3-venv/bin/activate
+source ~/ns-allinone-3.48/ns-3.48/ns3-venv/bin/activate
 pip install -r requirements_wsl.txt
 ```
 
@@ -88,6 +88,44 @@ bash run_ns3_wsl.sh --hours 6 --nodes 10
 bash run_ns3_wsl.sh --hours 48 --nodes 30 --netanim
 bash run_ns3_wsl.sh --no-netanim
 ```
+
+### Run Multi-Seed Experiment (Statistically Valid Results)
+
+For paper-quality results, we run the simulation multiple times with different random seeds to eliminate noise and compute valid statistics (Cohen's d, paired t-tests, win-rates).
+
+You can run this either with the standalone Python script (faster, no NS-3 dependencies) or via the full NS-3 simulation in WSL:
+
+**1. Standalone (Faster, Python only):**
+```bash
+# Recommended full run (15 seeds, 48 hours, 200 nodes)
+python run_multi_seed_experiment.py
+
+# Quick smoke test (5 seeds, 12 hours, 50 nodes)
+python run_multi_seed_experiment.py --seeds 5 --hours 12 --nodes 50 --results-dir results/smoke_test
+```
+
+**2. Full NS-3 Simulation (In WSL):**
+Multi-seed experiments are run by default after the main simulation when using the full NS-3 simulation. You can customize the number of seeds, or disable it completely.
+
+```bash
+# Runs a full 15-seed NS-3 simulation (multi-seed is enabled by default)
+bash run_ns3_wsl.sh --hours 48 --nodes 200
+
+# Customize the number of seeds
+bash run_ns3_wsl.sh --seeds 20
+
+# Disable multi-seed experiment
+bash run_ns3_wsl.sh --no-multi-seed
+```
+
+**Expected Results:**
+Both methods will generate files in the `results/` folder, including:
+- `multi_seed_report.md`: The main statistical analysis report
+- `ms_01_boxplot_total_carbon.png`: Box plot of total carbon per run
+- `ms_02_errorbar_mean_ci.png`: Mean carbon with 95% confidence intervals
+- `ms_04_stats_summary_panel.png`: A text panel summarizing the key metrics
+
+*(Note: The `results/smoke_test/` folder contains output from the smaller test run. You should use the files directly in `results/` for the full 15-seed simulation.)*
 
 ### Run tests
 

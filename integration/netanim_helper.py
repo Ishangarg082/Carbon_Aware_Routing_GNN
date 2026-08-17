@@ -1,5 +1,5 @@
 """
-NetAnim Integration - ns-3 Network Animation Visualization (ns-3.41+)
+NetAnim Integration - ns-3 Network Animation Visualization (ns-3.48+)
 
 NetAnim is ns-3's official network animator that provides:
 - Packet-level animation (visualize packet flows)

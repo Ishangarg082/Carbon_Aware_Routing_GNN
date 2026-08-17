@@ -77,7 +77,7 @@ class NetworkTopology:
         
         # Add a few cross-links between access nodes for extra redundancy
         access_nodes = list(range(agg_nodes, self.num_nodes))
-        np.random.seed(42)
+        # NOTE: seed is inherited from the caller (np.random.seed set before create_network())
         num_cross = max(2, len(access_nodes) // 3)
         for _ in range(num_cross):
             a, b = np.random.choice(access_nodes, 2, replace=False)
@@ -85,35 +85,44 @@ class NetworkTopology:
                 self.graph.add_edge(a, b)
     
     def _create_scale_free(self):
-        self.graph = nx.barabasi_albert_graph(self.num_nodes, m=2)
-        self.positions = nx.spring_layout(self.graph, seed=42)
+        rng_seed = int(np.random.randint(0, 2**31))
+        self.graph = nx.barabasi_albert_graph(self.num_nodes, m=np.random.randint(2, 5), seed=rng_seed)
+        self.positions = nx.spring_layout(self.graph, seed=rng_seed)
     
     def _create_small_world(self):
-        k = max(4, self.num_nodes // 5)
-        self.graph = nx.watts_strogatz_graph(self.num_nodes, k, p=0.3, seed=42)
+        rng_seed = int(np.random.randint(0, 2**31))
+        k = max(4, np.random.randint(4, max(5, self.num_nodes // 4)))
+        p_rewire = np.random.uniform(0.1, 0.5)   # rewiring probability varies per seed
+        self.graph = nx.watts_strogatz_graph(self.num_nodes, k, p=p_rewire, seed=rng_seed)
         self.positions = nx.circular_layout(self.graph)
     
     def _create_random(self):
-        p = 3 * np.log(self.num_nodes) / self.num_nodes
-        self.graph = nx.erdos_renyi_graph(self.num_nodes, p, seed=42)
-        while not nx.is_connected(self.graph):
-            self.graph = nx.erdos_renyi_graph(self.num_nodes, p + 0.05, seed=42)
-        self.positions = nx.spring_layout(self.graph, seed=42)
+        rng_seed = int(np.random.randint(0, 2**31))
+        p = np.random.uniform(0.05, 0.15) + np.log(self.num_nodes) / self.num_nodes
+        self.graph = nx.erdos_renyi_graph(self.num_nodes, p, seed=rng_seed)
+        attempts = 0
+        while not nx.is_connected(self.graph) and attempts < 20:
+            p += 0.05
+            rng_seed += 1
+            self.graph = nx.erdos_renyi_graph(self.num_nodes, p, seed=rng_seed)
+            attempts += 1
+        self.positions = nx.spring_layout(self.graph, seed=rng_seed)
     
     def _assign_link_properties(self):
+        # base_bw and delay_scale are set by caller to vary per seed
+        base_bw   = getattr(self, 'base_bw',    1000)
+        delay_scale = getattr(self, 'delay_scale', 100)
         for u, v in self.graph.edges():
             if u in self.positions and v in self.positions:
                 pos_u = np.array(self.positions[u])
                 pos_v = np.array(self.positions[v])
                 distance = np.linalg.norm(pos_u - pos_v)
             else:
-                distance = 0.1
-            
-            base_bw = 1000
+                distance = np.random.uniform(0.05, 0.3)
+
             bandwidth = int(base_bw * np.random.uniform(0.5, 2.0))
-            
-            delay = max(1, int(distance * 100))
-            
+            delay = max(1, int(distance * delay_scale))
+
             self.edge_properties[(u, v)] = {
                 'bandwidth': bandwidth,
                 'delay': delay,
@@ -169,10 +178,13 @@ class NetworkTopology:
         return np.array(features)
 
 
-def create_network(num_nodes=20, topology='hierarchical'):
+def create_network(num_nodes=20, topology='hierarchical', base_bw=1000, delay_scale=100):
     topo = NetworkTopology(num_nodes, topology)
+    # inject per-seed link parameters
+    topo.base_bw = base_bw
+    topo.delay_scale = delay_scale
     graph = topo.generate()
-    
+
     return {
         'graph': graph,
         'positions': topo.positions,

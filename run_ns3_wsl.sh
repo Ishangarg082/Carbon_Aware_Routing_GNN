@@ -22,25 +22,26 @@ echo ""
 # --- Environment Setup ---
 
 # 1. Activate virtual environment
-if [ -d "$HOME/ns3-venv" ]; then
-    source ~/ns3-venv/bin/activate
+VENV_PATH="$HOME/ns-allinone-3.48/ns-3.48/ns3-venv"
+if [ -d "$VENV_PATH" ]; then
+    source "$VENV_PATH/bin/activate"
     echo "✓ Virtual environment activated"
 else
-    echo "⚠ ns3-venv not found at ~/ns3-venv"
-    echo "  Create it: python3 -m venv ~/ns3-venv"
+    echo "⚠ ns3-venv not found at $VENV_PATH"
+    echo "  Create it using setup_ns3_wsl.sh"
     exit 1
 fi
 
 # 2. Strip Windows paths from PATH (prevents cppyy freeze in WSL)
-export PATH=~/ns3-venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+export PATH=$VENV_PATH/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 echo "✓ PATH cleaned (Windows paths removed)"
 
 # 3. Set ns-3 Python bindings path
-NS3_DIR="$HOME/ns-allinone-3.41/ns-3.41"
+NS3_DIR="$HOME/ns-allinone-3.48/ns-3.48"
 if [ -d "$NS3_DIR" ]; then
     export PYTHONPATH="$NS3_DIR/build/bindings/python:$PYTHONPATH"
     export LD_LIBRARY_PATH="$NS3_DIR/build/lib:$LD_LIBRARY_PATH"
-    echo "✓ ns-3.41 paths configured"
+    echo "✓ ns-3.48 paths configured"
 else
     echo "❌ ns-3 not found at $NS3_DIR"
     exit 1

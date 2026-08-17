@@ -1,5 +1,5 @@
 """
-ns-3 Integration Module - Real ns-3 Python Bindings Support (ns-3.41+)
+ns-3 Integration Module - Real ns-3 Python Bindings Support (ns-3.48+)
 
 This module provides integration with actual ns-3 network simulator
 when running in WSL environment where ns-3 is installed.
@@ -19,7 +19,7 @@ try:
     from ns import ns as _ns
     ns = _ns
     NS3_AVAILABLE = True
-    print("ns-3 Python bindings loaded successfully (ns-3.41)")
+    print("ns-3 Python bindings loaded successfully (ns-3.48)")
 except ImportError:
     NS3_AVAILABLE = False
     ns = None
@@ -142,27 +142,60 @@ class NS3NetworkBuilder:
 class NS3StateExtractor:
     """Extracts state from running ns-3 simulation"""
     
+    ENERGY_TYPES = ['solar', 'wind', 'hydro', 'coal', 'nuclear', 'mixed']
+    
     def __init__(self, nodes):
         self.nodes = nodes
     
-    def extract_full_state(self, num_nodes, topology):
-        """Extract complete network state for GNN input"""
+    def extract_full_state(self, num_nodes, topology, carbon_mgr=None, timestamp=0):
+        """Extract complete 13-feature network state for GNN input.
+        
+        Features (13-dim per node):
+          [energy_ratio, carbon_intensity/1000, queue_load, cpu_usage,
+           degree/num_nodes, time_factor, carbon_intensity/1500,
+           solar, wind, hydro, coal, nuclear, mixed]  <- 6-dim one-hot
+        """
         node_features = []
+        
+        hour_of_day = (timestamp / 3600) % 24
+        time_factor = 0.3 + 0.5 * float(np.sin(hour_of_day * np.pi / 12) ** 2)
         
         for i in range(num_nodes):
             num_interfaces = topology['graph'].degree(i)
+            
+            # Carbon intensity from manager if available, else placeholder
+            if carbon_mgr is not None:
+                carbon_intensity = float(carbon_mgr.get_node_intensity(i, timestamp))
+            else:
+                carbon_intensity = 400.0  # fallback neutral value
+            
+            energy_ratio = 1.0 - min(carbon_intensity / 800.0, 1.0)
+            queue_load = time_factor * (0.5 + 0.3 * float(np.sin(i * 1.5)))
+            cpu_usage = (30 + 40 * time_factor + 10 * float(np.sin(i * 2.0))) / 100.0
+            
             features = [
-                1.0,      # energy ratio (assume full)
-                0.35,     # utilization placeholder
-                0.0,      # queue load placeholder
-                0.5,      # generic feature
-                num_interfaces / num_nodes,
-                0.0,
-                0.0
+                energy_ratio,
+                carbon_intensity / 1000.0,
+                queue_load,
+                cpu_usage,
+                num_interfaces / max(num_nodes, 1),
+                time_factor,
+                carbon_intensity / 1500.0,
             ]
+            
+            # 6-dim one-hot energy source encoding
+            one_hot = [0.0] * 6
+            if carbon_mgr is not None and hasattr(carbon_mgr, 'get_node_profile_type'):
+                ptype = carbon_mgr.get_node_profile_type(i)
+                if ptype in self.ENERGY_TYPES:
+                    one_hot[self.ENERGY_TYPES.index(ptype)] = 1.0
+            else:
+                one_hot[-1] = 1.0  # default to 'mixed'
+            features.extend(one_hot)
+            
             node_features.append(features)
         
-        return np.array(node_features)
+        return np.array(node_features)  # shape: (num_nodes, 13)
 
 
 class NS3RoutingController:
@@ -247,9 +280,10 @@ def run_ns3_simulation(gnn_model, topology, carbon_mgr, duration_seconds=86400,
     for step in range(num_intervals):
         current_time = step * control_interval
         
-        # 1. Extract network state from ns-3
+        # 1. Extract network state from ns-3 (13 features per node)
         state = state_extractor.extract_full_state(
-            topology['graph'].number_of_nodes(), topology
+            topology['graph'].number_of_nodes(), topology,
+            carbon_mgr=carbon_mgr, timestamp=current_time
         )
         
         # 2. Run GNN to compute optimal routes
@@ -308,7 +342,7 @@ def run_ns3_simulation(gnn_model, topology, carbon_mgr, duration_seconds=86400,
 
 if __name__ == "__main__":
     if NS3_AVAILABLE:
-        print("\nns-3 integration module ready (ns-3.41)")
+        print("\nns-3 integration module ready (ns-3.48)")
         print("  C++ helpers:", "ready" if _helpers_ready else "not available")
         print("  Run in WSL with ns-3 installed")
     else:

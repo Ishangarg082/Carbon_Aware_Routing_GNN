@@ -1,5 +1,5 @@
 """
-Full NS-3 Simulation with NetAnim (ns-3.41+)
+Full NS-3 Simulation with NetAnim (ns-3.48+)
 
 This script runs the carbon-aware routing simulation using REAL ns-3
 and generates NetAnim animation files.
@@ -9,10 +9,10 @@ Prerequisites:
 - Run from WSL environment with proper environment setup
 
 Quick start (in WSL):
-    source ~/ns3-venv/bin/activate
-    export PATH=~/ns3-venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-    export PYTHONPATH=~/ns-allinone-3.41/ns-3.41/build/bindings/python:$PYTHONPATH
-    export LD_LIBRARY_PATH=~/ns-allinone-3.41/ns-3.41/build/lib:$LD_LIBRARY_PATH
+    source ~/ns-allinone-3.48/ns-3.48/ns3-venv/bin/activate
+    export PATH=~/ns-allinone-3.48/ns-3.48/ns3-venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+    export PYTHONPATH=~/ns-allinone-3.48/ns-3.48/build/bindings/python:$PYTHONPATH
+    export LD_LIBRARY_PATH=~/ns-allinone-3.48/ns-3.48/build/lib:$LD_LIBRARY_PATH
     cd /mnt/e/nnd_implementation/Carbon_aware_routing_via_GNN_model
     python3 run_ns3_demo.py
 
@@ -35,10 +35,10 @@ from visualization.metrics_analyzer import MetricsAnalyzer
 if not NS3_AVAILABLE:
     print("ns-3 not available!")
     print("\nMake sure you've set up the environment:")
-    print("  source ~/ns3-venv/bin/activate")
-    print("  export PATH=~/ns3-venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
-    print("  export PYTHONPATH=~/ns-allinone-3.41/ns-3.41/build/bindings/python:$PYTHONPATH")
-    print("  export LD_LIBRARY_PATH=~/ns-allinone-3.41/ns-3.41/build/lib:$LD_LIBRARY_PATH")
+    print("  source ~/ns-allinone-3.48/ns-3.48/ns3-venv/bin/activate")
+    print("  export PATH=~/ns-allinone-3.48/ns-3.48/ns3-venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin")
+    print("  export PYTHONPATH=~/ns-allinone-3.48/ns-3.48/build/bindings/python:$PYTHONPATH")
+    print("  export LD_LIBRARY_PATH=~/ns-allinone-3.48/ns-3.48/build/lib:$LD_LIBRARY_PATH")
     sys.exit(1)
 
 
@@ -75,7 +75,7 @@ def run_full_ns3_simulation(num_nodes=20, duration_hours=24, enable_netanim=True
     
     print(f"\n🧠 Loading enhanced GAT model...")
     model = CarbonAwareGAT(
-        node_features=7,
+        node_features=13,
         edge_features=3,
         hidden_dim=128,
         num_layers=3,
@@ -214,6 +214,8 @@ def run_full_ns3_simulation(num_nodes=20, duration_hours=24, enable_netanim=True
         import matplotlib
         matplotlib.use('Agg')
         import matplotlib.pyplot as plt
+        plt.rcParams['axes.unicode_minus'] = False
+        plt.rcParams['font.family'] = 'DejaVu Sans'
         
         reduction = analyzer.calculate_carbon_reduction()
         energy = analyzer.calculate_energy_metrics()
@@ -248,7 +250,7 @@ def run_full_ns3_simulation(num_nodes=20, duration_hours=24, enable_netanim=True
             ax.spines['left'].set_color(BORDER)
             ax.spines['top'].set_visible(False)
             ax.spines['right'].set_visible(False)
-            ax.set_title(title, fontsize=11, fontweight='600', color=TXT, pad=10, loc='left')
+            ax.set_title(title, fontsize=11, color=TXT, pad=10, loc='left')
         
         # ── Plot 1: Hourly Emissions ──
         fig, ax = plt.subplots(figsize=(10, 5), facecolor=BG)
@@ -275,7 +277,7 @@ def run_full_ns3_simulation(num_nodes=20, duration_hours=24, enable_netanim=True
         bars = ax.bar(labels, totals, color=bar_colors, alpha=0.75, edgecolor='none', width=0.5)
         for bar, val in zip(bars, totals):
             ax.text(bar.get_x() + bar.get_width()/2., bar.get_height(),
-                    f'{val:,.0f}', ha='center', va='bottom', fontsize=9, fontweight='600', color=TXT)
+                    f'{val:,.0f}', ha='center', va='bottom', fontsize=9, color=TXT)
         ax.set_ylabel('Total Carbon (gCO2)', fontsize=9, color=TXT2)
         ax.grid(axis='y', alpha=0.15, color=BORDER)
         plt.tight_layout()
@@ -350,7 +352,7 @@ def run_full_ns3_simulation(num_nodes=20, duration_hours=24, enable_netanim=True
             for i in range(len(p_labels)):
                 gnn_red = (p_bl[i] - p_ca[i]) / p_bl[i] * 100 if p_bl[i] else 0
                 ax.text(x[i] + bw, p_ca[i], f'{gnn_red:.1f}%', ha='center', va='bottom',
-                        fontsize=8, fontweight='600', color=GRN)
+                        fontsize=8, color=GRN)
         ax.set_ylabel('Carbon (gCO2)', fontsize=9, color=TXT2)
         ax.legend(fontsize=8, framealpha=0.9, edgecolor=BORDER, facecolor=CARD, labelcolor=TXT2)
         ax.grid(axis='y', alpha=0.15, color=BORDER)
@@ -374,7 +376,7 @@ def run_full_ns3_simulation(num_nodes=20, duration_hours=24, enable_netanim=True
             ax.pie(sizes_nz, labels=labels_nz, colors=colors_nz, autopct='%1.0f%%',
                    startangle=90, textprops={'fontsize': 10, 'color': TXT})
         ax.set_title(f'Routing Consistency ({energy["consistency"]:.0f}% GNN effective)',
-                     fontsize=11, fontweight='600', color=TXT, pad=10)
+                     fontsize=11, color=TXT, pad=10)
         plt.tight_layout()
         plt.savefig(os.path.join(results_dir, '06_consistency_pie.png'), dpi=150, bbox_inches='tight', facecolor=BG)
         plt.close()
@@ -447,6 +449,24 @@ Examples:
     parser.add_argument('--no-netanim', dest='netanim', action='store_false',
                        help='Disable NetAnim (faster)')
     parser.set_defaults(netanim=True)
+    parser.add_argument(
+        '--multi-seed', action='store_true', dest='multi_seed',
+        help=(
+            'After the main simulation, run N independent seeds and produce '
+            'statistically valid between-run Cohen\'s d, paired t-test, '
+            'Wilcoxon, win rate, and error-bar plots (enabled by default).'
+        ),
+    )
+    parser.add_argument(
+        '--no-multi-seed', action='store_false', dest='multi_seed',
+        help='Disable the multi-seed statistical analysis'
+    )
+    parser.set_defaults(multi_seed=True)
+    parser.add_argument(
+        '--seeds', type=int, default=15,
+        metavar='N',
+        help='Number of independent seeds for --multi-seed (default: 15)',
+    )
     
     args = parser.parse_args()
     
@@ -459,13 +479,33 @@ Examples:
         print("Error: Minimum 1 hour required")
         sys.exit(1)
     
-    # Run
+    # Run single-run simulation
     results = run_full_ns3_simulation(
         num_nodes=args.nodes,
         duration_hours=args.hours,
         enable_netanim=args.netanim
     )
-    
+
+    # Optional multi-seed statistical analysis
+    if args.multi_seed:
+        print("\n" + "=" * 70)
+        print(" MULTI-SEED STATISTICAL ANALYSIS")
+        print("=" * 70)
+        print(f" Running {args.seeds} independent seeds ({args.hours}h each) ...")
+        print("=" * 70 + "\n")
+        from run_multi_seed_experiment import run_multi_seed_experiment
+        results_dir = (
+            "/mnt/e/nnd_implementation/Carbon_aware_routing_via_GNN_model/results"
+            if os.path.exists("/mnt/e/nnd_implementation")
+            else "results"
+        )
+        run_multi_seed_experiment(
+            n_seeds=args.seeds,
+            num_nodes=args.nodes,
+            duration_hours=args.hours,
+            results_dir=results_dir,
+        )
+
     print("Done!")
 
 

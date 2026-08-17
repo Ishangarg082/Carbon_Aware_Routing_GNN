@@ -45,8 +45,34 @@ class RoutingController:
         self.carbon_history = []
         
         # Initialize traffic matrix generation
-        from simulation.traffic_matrix import TrafficMatrix
-        self.traffic_matrix = TrafficMatrix(topology['graph'].number_of_nodes(), topology['graph'])
+        try:
+            from simulation.traffic_matrix import CSVDrivenTrafficMatrix
+            import os
+            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            csv_path = os.path.join(base_dir, 'carbon_network_data.csv')
+            if os.path.exists(csv_path):
+                self.traffic_matrix = CSVDrivenTrafficMatrix(topology['graph'].number_of_nodes(), topology['graph'], csv_path)
+            else:
+                from simulation.traffic_matrix import TrafficMatrix
+                self.traffic_matrix = TrafficMatrix(topology['graph'].number_of_nodes(), topology['graph'])
+        except ImportError:
+            from simulation.traffic_matrix import TrafficMatrix
+            self.traffic_matrix = TrafficMatrix(topology['graph'].number_of_nodes(), topology['graph'])
+        
+        # Initialize MLP Validator if available
+        self.mlp_validator = None
+        try:
+            from models.carbon_predictor import CarbonRoutingOptimizer
+            import os
+            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            model_path = os.path.join(base_dir, 'models', 'best_carbon_predictor.pth')
+            scaler_path = os.path.join(base_dir, 'models', 'feature_scaler.pkl')
+            if os.path.exists(model_path):
+                self.mlp_validator = CarbonRoutingOptimizer(model_path)
+                if os.path.exists(scaler_path):
+                    self.mlp_validator.load_scaler(scaler_path)
+        except Exception as e:
+            print(f"Warning: MLP validator not loaded ({e})")
         
         self._initialize_nodes()
     
@@ -90,6 +116,17 @@ class RoutingController:
                 time_factor,
                 carbon_intensity / 1500.0
             ]
+            
+            ptypes = ['solar', 'wind', 'hydro', 'coal', 'nuclear', 'mixed']
+            one_hot = [0.0] * 6
+            if hasattr(self.carbon_manager, 'get_node_profile_type'):
+                ptype = self.carbon_manager.get_node_profile_type(i)
+                if ptype in ptypes:
+                    one_hot[ptypes.index(ptype)] = 1.0
+            else:
+                one_hot[-1] = 1.0  # Default to mixed
+                
+            features.extend(one_hot)
             node_features.append(features)
         
         edge_index = self.topology['edge_index']
@@ -176,7 +213,7 @@ class RoutingController:
         
         # Distribute traffic based on routing decisions
         from simulation.traffic_matrix import distribute_traffic_by_routing
-        node_traffic_loads = distribute_traffic_by_routing(
+        node_traffic_loads, routed_flows = distribute_traffic_by_routing(
             traffic_flows,
             self.topology['graph'],
             link_weights,
@@ -190,11 +227,35 @@ class RoutingController:
             carbon_intensities, node_traffic_loads, self.control_interval
         )
         
+        mlp_pred = 0.0
+        if self.mlp_validator is not None and len(routed_flows) > 0:
+            for rf in routed_flows:
+                feat = rf['flow_feat'] if rf['flow_feat'] else {}
+                # Fallback to simulated estimates if not in CSV
+                duration_estimate = rf['num_hops'] * 10 + (rf['traffic_gbps'] * 1e9 / 8) / 1e5
+                features = {
+                    'num_hops': rf['num_hops'],
+                    'packet_count': feat.get('packet_count', int(rf['traffic_gbps'] * 1000)),
+                    'byte_count': feat.get('byte_count', int(rf['traffic_gbps'] * 1e9 / 8)),
+                    'flow_duration': feat.get('flow_duration', duration_estimate),
+                    'cpu_usage': feat.get('cpu_usage', 50.0),
+                    'carbon_intensity': carbon_intensities.get(rf['src'], 300.0),
+                    'protocol': feat.get('protocol', 'TCP')
+                }
+                pred = self.mlp_validator.predict_carbon(features)
+                # MLP predicts for the discrete flow_duration (in ms).
+                # The physical simulation treats traffic as a steady-state continuous rate over the entire control_interval (in seconds).
+                # We scale the MLP prediction to match the hourly aggregated simulation output.
+                duration_ms = max(features['flow_duration'], 1.0)
+                scale_factor = (self.control_interval * 1000) / duration_ms
+                mlp_pred += (pred * scale_factor)
+        
         self.routing_history.append({
             'timestamp': timestamp,
             'weights': link_weights.copy(),
             'predicted_carbon': carbon_pred,
             'actual_carbon': actual_carbon,
+            'mlp_predicted_carbon': mlp_pred,
             'traffic_loads': node_traffic_loads
         })
         self.carbon_history.append(actual_carbon)
@@ -244,9 +305,21 @@ class BaselineController:
         self.carbon_history = []
         self.current_time = 0
         
-        # Initialize traffic matrix generation (same as carbon-aware)
-        from simulation.traffic_matrix import TrafficMatrix
-        self.traffic_matrix = TrafficMatrix(topology['graph'].number_of_nodes(), topology['graph'])
+        # Initialize traffic matrix generation
+        try:
+            from simulation.traffic_matrix import CSVDrivenTrafficMatrix
+            import os
+            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            csv_path = os.path.join(base_dir, 'carbon_network_data.csv')
+            if os.path.exists(csv_path):
+                self.traffic_matrix = CSVDrivenTrafficMatrix(topology['graph'].number_of_nodes(), topology['graph'], csv_path)
+            else:
+                from simulation.traffic_matrix import TrafficMatrix
+                self.traffic_matrix = TrafficMatrix(topology['graph'].number_of_nodes(), topology['graph'])
+        except ImportError:
+            from simulation.traffic_matrix import TrafficMatrix
+            self.traffic_matrix = TrafficMatrix(topology['graph'].number_of_nodes(), topology['graph'])
+
     
     def run_control_loop(self, duration_seconds):
         num_iterations = int(duration_seconds / self.control_interval)
@@ -266,7 +339,7 @@ class BaselineController:
             
             # Distribute traffic using shortest paths
             from simulation.traffic_matrix import distribute_traffic_by_routing
-            node_traffic_loads = distribute_traffic_by_routing(
+            node_traffic_loads, routed_flows = distribute_traffic_by_routing(
                 traffic_flows,
                 self.topology['graph'],
                 uniform_weights,
@@ -311,11 +384,21 @@ class ThresholdCarbonController:
         self.carbon_history = []
         self.routing_history = []
         self.current_time = 0
-
-        from simulation.traffic_matrix import TrafficMatrix
-        self.traffic_matrix = TrafficMatrix(
-            topology['graph'].number_of_nodes(), topology['graph']
-        )
+        
+        # Initialize traffic matrix generation exactly as in BaselineController
+        try:
+            from simulation.traffic_matrix import CSVDrivenTrafficMatrix
+            import os
+            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            csv_path = os.path.join(base_dir, 'carbon_network_data.csv')
+            if os.path.exists(csv_path):
+                self.traffic_matrix = CSVDrivenTrafficMatrix(topology['graph'].number_of_nodes(), topology['graph'], csv_path)
+            else:
+                from simulation.traffic_matrix import TrafficMatrix
+                self.traffic_matrix = TrafficMatrix(topology['graph'].number_of_nodes(), topology['graph'])
+        except ImportError:
+            from simulation.traffic_matrix import TrafficMatrix
+            self.traffic_matrix = TrafficMatrix(topology['graph'].number_of_nodes(), topology['graph'])
 
     def run_control_loop(self, duration_seconds):
         num_iterations = int(duration_seconds / self.control_interval)
@@ -351,7 +434,7 @@ class ThresholdCarbonController:
                     weights[idx] = self.HOP_COST + self.DIRTY_PENALTY
 
             from simulation.traffic_matrix import distribute_traffic_by_routing
-            node_traffic_loads = distribute_traffic_by_routing(
+            node_traffic_loads, routed_flows = distribute_traffic_by_routing(
                 traffic_flows,
                 self.topology['graph'],
                 weights,
@@ -396,7 +479,7 @@ if __name__ == "__main__":
     energy_mgr = NetworkEnergyManager(num_nodes)
     energy_mgr.initialize_nodes()
     
-    model = CarbonAwareGAT(node_features=7, edge_features=3, hidden_dim=64, num_layers=2)
+    model = CarbonAwareGAT(node_features=13, edge_features=3, hidden_dim=64, num_layers=2)
     
     controller = RoutingController(model, topology, carbon_mgr, energy_mgr, 
                                    control_interval=3600, use_ns3=False)

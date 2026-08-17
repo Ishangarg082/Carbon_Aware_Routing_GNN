@@ -1,4 +1,6 @@
+import os
 import numpy as np
+import pandas as pd
 from datetime import datetime, timedelta
 
 class CarbonProfile:
@@ -66,6 +68,12 @@ class CarbonProfileManager:
             profile_name = self.node_assignments[node_id]
         
         return self.profiles[profile_name].get_intensity(timestamp)
+        
+    def get_node_profile_type(self, node_id):
+        if node_id not in self.node_assignments:
+            return 'mixed'
+        profile_name = self.node_assignments[node_id]
+        return self.profiles[profile_name].profile_type
     
     def get_all_intensities(self, timestamp):
         intensities = {}
@@ -199,6 +207,62 @@ def create_multi_region_profiles(num_nodes, num_regions=3):
         
         manager.add_node_profile(node_id, hourly_pattern)
     
+    return manager
+
+
+class CSVDrivenProfileManager(CarbonProfileManager):
+    """
+    Carbon Profile Manager that samples real carbon intensities from the CSV dataset.
+    """
+    def __init__(self, csv_path='carbon_network_data.csv'):
+        super().__init__()
+        self.csv_path = csv_path
+        self.real_intensities = []
+        self._load_csv()
+        
+    def _load_csv(self):
+        try:
+            import os
+            import pandas as pd
+            # Look for CSV in the root directory (assuming script runs from there)
+            if not os.path.exists(self.csv_path):
+                # Try relative to this file
+                base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                self.csv_path = os.path.join(base_dir, self.csv_path)
+                
+            if os.path.exists(self.csv_path):
+                df = pd.read_csv(self.csv_path)
+                if 'carbon_intensity' in df.columns:
+                    self.real_intensities = df['carbon_intensity'].values
+                    print(f"Loaded {len(self.real_intensities)} real carbon intensity samples from CSV.")
+                else:
+                    print("Warning: 'carbon_intensity' column not found in CSV.")
+            else:
+                print(f"Warning: CSV file not found at {self.csv_path}. Falling back to default profiles.")
+        except Exception as e:
+            print(f"Error loading CSV for carbon profiles: {e}")
+
+    def assign_csv_profiles(self, num_nodes):
+        """Assign random real intensity distributions to nodes."""
+        for i in range(num_nodes):
+            if len(self.real_intensities) > 0:
+                # Sample a base intensity from the real data
+                base_intensity = np.random.choice(self.real_intensities)
+            else:
+                base_intensity = np.random.uniform(200, 600)
+            
+            # Create a custom profile that scales this base intensity temporally
+            # We use all available types so the GNN can learn their distinct patterns
+            profile_name = f'csv_node_{i}'
+            ptype = np.random.choice(['solar', 'wind', 'hydro', 'coal', 'nuclear', 'mixed'])
+            self.profiles[profile_name] = CarbonProfile(profile_name, ptype, base_intensity=base_intensity)
+            self.assign_profile(i, profile_name)
+
+
+def create_csv_driven_profiles(num_nodes, csv_path='carbon_network_data.csv'):
+    """Factory function for CSV driven profiles."""
+    manager = CSVDrivenProfileManager(csv_path)
+    manager.assign_csv_profiles(num_nodes)
     return manager
 
 

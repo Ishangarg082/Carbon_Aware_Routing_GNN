@@ -5,6 +5,8 @@ Generates realistic traffic patterns between network nodes based on
 topology, time of day, and network characteristics.
 """
 
+import os
+import pandas as pd
 import numpy as np
 import networkx as nx
 from typing import Dict, List, Tuple
@@ -125,25 +127,106 @@ class TrafficMatrix:
         return flows
 
 
+class CSVDrivenTrafficMatrix(TrafficMatrix):
+    """
+    Traffic Matrix that generates flows by sampling sizes and characteristics 
+    from the real carbon_network_data.csv dataset.
+    """
+    def __init__(self, num_nodes: int, topology_graph: nx.Graph, csv_path='carbon_network_data.csv'):
+        super().__init__(num_nodes, topology_graph)
+        self.csv_path = csv_path
+        self.real_flows = []
+        self._load_csv()
+
+    def _load_csv(self):
+        try:
+            if not os.path.exists(self.csv_path):
+                base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                self.csv_path = os.path.join(base_dir, self.csv_path)
+                
+            if os.path.exists(self.csv_path):
+                df = pd.read_csv(self.csv_path)
+                if 'byte_count' in df.columns and 'flow_duration' in df.columns:
+                    # Pre-calculate Gbps for each row to sample efficiently
+                    # Gbps = (bytes * 8) / (duration * 1e9)  [assuming duration is ms, so convert to s]
+                    # The dataset has duration in ms (7-547 ms), bytes in 1e4-1e7 range
+                    # Let's compute approx Gbps directly. 
+                    # If duration is ms:
+                    df['gbps'] = (df['byte_count'] * 8) / (df['flow_duration'] * 1e6)
+                    # We store the rows as dictionaries to retain other features for validation later
+                    self.real_flows = df.to_dict('records')
+                    print(f"Loaded {len(self.real_flows)} real flows from CSV.")
+                else:
+                    print("Warning: Missing columns in CSV for traffic generation.")
+            else:
+                print(f"Warning: CSV file not found at {self.csv_path}. Falling back to default traffic.")
+        except Exception as e:
+            print(f"Error loading CSV for traffic: {e}")
+
+    def generate_datacenter_traffic(self, dc_nodes=None) -> List[Tuple[int, int, float, dict]]:
+        """
+        Generate data center traffic, but sizes are sampled from CSV.
+        Returns a list of tuples: (src, dst, traffic_gbps, flow_features_dict)
+        """
+        flows = []
+        if dc_nodes is None:
+            num_dc = max(2, self.num_nodes // 5)
+            dc_nodes = list(range(num_dc))
+        
+        client_nodes = [n for n in range(self.num_nodes) if n not in dc_nodes]
+        
+        # We'll just generate the same number of flows, but sample their size from CSV
+        # If CSV is loaded, use it. Otherwise fallback to uniform random
+        for dc in dc_nodes:
+            for client in client_nodes:
+                if nx.has_path(self.graph, dc, client):
+                    if len(self.real_flows) > 0:
+                        flow_feat = np.random.choice(self.real_flows)
+                        traffic = flow_feat['gbps']
+                        flows.append((dc, client, traffic, flow_feat))
+                    else:
+                        traffic = np.random.uniform(0.5, 2.0)
+                        flows.append((dc, client, traffic, {}))
+        
+        num_client_flows = len(client_nodes) // 2
+        for _ in range(num_client_flows):
+            src = np.random.choice(client_nodes)
+            dst = np.random.choice(client_nodes)
+            if src != dst and nx.has_path(self.graph, src, dst):
+                if len(self.real_flows) > 0:
+                    flow_feat = np.random.choice(self.real_flows)
+                    # Client-client traffic is typically much lighter, scale it down
+                    traffic = flow_feat['gbps'] * 0.1
+                    flows.append((src, dst, traffic, flow_feat))
+                else:
+                    traffic = np.random.uniform(0.01, 0.1)
+                    flows.append((src, dst, traffic, {}))
+                    
+        return flows
+
+
 def distribute_traffic_by_routing(
-    traffic_flows: List[Tuple[int, int, float]],
+    traffic_flows: List[Tuple],
     topology_graph: nx.Graph,
     link_weights: np.ndarray,
     edge_index: np.ndarray
-) -> Dict[int, float]:
+) -> Tuple[Dict[int, float], List[dict]]:
     """
     Distribute traffic across nodes based on routing decisions
     
     Args:
-        traffic_flows: List of (src, dst, traffic_gbps) tuples
+        traffic_flows: List of (src, dst, traffic_gbps) or (src, dst, traffic_gbps, flow_feat)
         topology_graph: Network topology
         link_weights: Current routing weights for each edge
         edge_index: Edge connectivity (2 x num_edges)
     
     Returns:
-        Dictionary mapping node_id to total traffic load (Gbps)
+        Tuple:
+        - Dictionary mapping node_id to total traffic load (Gbps)
+        - List of dictionaries with routed flow details (for MLP validation)
     """
     node_traffic = {i: 0.0 for i in topology_graph.nodes()}
+    routed_flows = []
     
     # Create weighted graph for routing
     weighted_graph = topology_graph.copy()
@@ -158,7 +241,13 @@ def distribute_traffic_by_routing(
             weighted_graph[src][dst]['weight'] = weight
     
     # Route each traffic flow
-    for src, dst, traffic_gbps in traffic_flows:
+    for flow in traffic_flows:
+        if len(flow) == 4:
+            src, dst, traffic_gbps, flow_feat = flow
+        else:
+            src, dst, traffic_gbps = flow
+            flow_feat = {}
+            
         try:
             # Find shortest path with current weights
             path = nx.shortest_path(weighted_graph, src, dst, weight='weight')
@@ -167,11 +256,20 @@ def distribute_traffic_by_routing(
             for node in path:
                 node_traffic[node] += traffic_gbps
                 
+            routed_flows.append({
+                'src': src,
+                'dst': dst,
+                'path': path,
+                'num_hops': len(path) - 1,
+                'traffic_gbps': traffic_gbps,
+                'flow_feat': flow_feat
+            })
+                
         except nx.NetworkXNoPath:
             # If no path exists, skip this flow
             continue
     
-    return node_traffic
+    return node_traffic, routed_flows
 
 
 if __name__ == "__main__":
