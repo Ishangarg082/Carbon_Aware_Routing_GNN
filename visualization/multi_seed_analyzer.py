@@ -1,4 +1,4 @@
-"""
+﻿"""
 Multi-Seed Statistical Analyzer
 ================================
 Computes statistically valid metrics from N independent simulation runs.
@@ -156,7 +156,20 @@ class MultiSeedAnalyzer:
             [per_seed_results[s]["threshold"]["total_carbon"] for s in self.seeds],
             dtype=float,
         )
-        
+        # Paper baselines (present only in new-format results; fall back gracefully)
+        self.linear_flow_carbon_totals = None
+        self.nash_game_totals   = None
+        if all("linear_flow_carbon" in per_seed_results[s] for s in self.seeds):
+            self.linear_flow_carbon_totals = np.array(
+                [per_seed_results[s]["linear_flow_carbon"]["total_carbon"] for s in self.seeds],
+                dtype=float,
+            )
+        if all("nash_game" in per_seed_results[s] for s in self.seeds):
+            self.nash_game_totals = np.array(
+                [per_seed_results[s]["nash_game"]["total_carbon"] for s in self.seeds],
+                dtype=float,
+            )
+
         # Extract MLP validation if available
         self.mlp_totals = None
         if "mlp_predicted_carbon" in first["gnn"] and len(first["gnn"]["mlp_predicted_carbon"]) > 0:
@@ -173,10 +186,14 @@ class MultiSeedAnalyzer:
         """Mean, SD, 95% CI for each method across N independent runs."""
         out = {}
         for name, arr in [
-            ("gnn", self.gnn_totals),
-            ("ospf", self.ospf_totals),
-            ("threshold", self.threshold_totals),
+            ("gnn",          self.gnn_totals),
+            ("ospf",         self.ospf_totals),
+            ("threshold",    self.threshold_totals),
+            ("linear_flow_carbon", self.linear_flow_carbon_totals),
+            ("nash_game",      self.nash_game_totals),
         ]:
+            if arr is None:
+                continue
             n = len(arr)
             mean = float(np.mean(arr))
             sd = float(np.std(arr, ddof=1))
@@ -204,10 +221,10 @@ class MultiSeedAnalyzer:
         All use independent-samples pooled-SD (Hedges formula, ddof=1).
         """
         d_gnn_ospf = _cohens_d_pooled(self.gnn_totals, self.ospf_totals)
-        d_gnn_thr = _cohens_d_pooled(self.gnn_totals, self.threshold_totals)
+        d_gnn_thr  = _cohens_d_pooled(self.gnn_totals, self.threshold_totals)
         d_ospf_thr = _cohens_d_pooled(self.threshold_totals, self.ospf_totals)
 
-        return {
+        out = {
             "gnn_vs_ospf": {
                 "d": d_gnn_ospf,
                 "label": _sawilowsky_label(d_gnn_ospf),
@@ -224,6 +241,21 @@ class MultiSeedAnalyzer:
                 "note": "OSPF mean - Threshold mean; positive = Threshold emits less",
             },
         }
+        if self.linear_flow_carbon_totals is not None:
+            d = _cohens_d_pooled(self.gnn_totals, self.linear_flow_carbon_totals)
+            out["gnn_vs_linear_flow_carbon"] = {
+                "d": d,
+                "label": _sawilowsky_label(d),
+                "note": "LinearFlowCarbon mean - GNN mean; positive = GNN emits less",
+            }
+        if self.nash_game_totals is not None:
+            d = _cohens_d_pooled(self.gnn_totals, self.nash_game_totals)
+            out["gnn_vs_nash_game"] = {
+                "d": d,
+                "label": _sawilowsky_label(d),
+                "note": "NashGame mean - GNN mean; positive = GNN emits less",
+            }
+        return out
 
     def paired_ttest(self) -> dict:
         """
@@ -231,21 +263,34 @@ class MultiSeedAnalyzer:
         H0: mean(OSPF total) == mean(GNN total)
         """
         t_stat, p_val = stats.ttest_rel(self.gnn_totals, self.ospf_totals)
-        t_thr, p_thr = stats.ttest_rel(self.gnn_totals, self.threshold_totals)
-        return {
+        t_thr,  p_thr  = stats.ttest_rel(self.gnn_totals, self.threshold_totals)
+        out = {
             "gnn_vs_ospf": {
                 "t_statistic": float(t_stat),
-                "p_value": float(p_val),
+                "p_value":     float(p_val),
                 "significant": bool(p_val < 0.05),
-                "df": self.n_runs - 1,
+                "df":          self.n_runs - 1,
             },
             "gnn_vs_threshold": {
                 "t_statistic": float(t_thr),
-                "p_value": float(p_thr),
+                "p_value":     float(p_thr),
                 "significant": bool(p_thr < 0.05),
-                "df": self.n_runs - 1,
+                "df":          self.n_runs - 1,
             },
         }
+        if self.linear_flow_carbon_totals is not None:
+            t, p = stats.ttest_rel(self.gnn_totals, self.linear_flow_carbon_totals)
+            out["gnn_vs_linear_flow_carbon"] = {
+                "t_statistic": float(t), "p_value": float(p),
+                "significant": bool(p < 0.05), "df": self.n_runs - 1,
+            }
+        if self.nash_game_totals is not None:
+            t, p = stats.ttest_rel(self.gnn_totals, self.nash_game_totals)
+            out["gnn_vs_nash_game"] = {
+                "t_statistic": float(t), "p_value": float(p),
+                "significant": bool(p < 0.05), "df": self.n_runs - 1,
+            }
+        return out
 
     def wilcoxon_test(self) -> dict:
         """
@@ -283,8 +328,8 @@ class MultiSeedAnalyzer:
         This is the valid replacement for the 'Consistency 100%' claim.
         """
         wins_vs_ospf = int(np.sum(self.gnn_totals < self.ospf_totals))
-        wins_vs_thr = int(np.sum(self.gnn_totals < self.threshold_totals))
-        return {
+        wins_vs_thr  = int(np.sum(self.gnn_totals < self.threshold_totals))
+        out = {
             "gnn_vs_ospf": {
                 "wins": wins_vs_ospf,
                 "total_runs": self.n_runs,
@@ -296,6 +341,19 @@ class MultiSeedAnalyzer:
                 "win_rate_pct": wins_vs_thr / self.n_runs * 100,
             },
         }
+        if self.linear_flow_carbon_totals is not None:
+            w = int(np.sum(self.gnn_totals < self.linear_flow_carbon_totals))
+            out["gnn_vs_linear_flow_carbon"] = {
+                "wins": w, "total_runs": self.n_runs,
+                "win_rate_pct": w / self.n_runs * 100,
+            }
+        if self.nash_game_totals is not None:
+            w = int(np.sum(self.gnn_totals < self.nash_game_totals))
+            out["gnn_vs_nash_game"] = {
+                "wins": w, "total_runs": self.n_runs,
+                "win_rate_pct": w / self.n_runs * 100,
+            }
+        return out
 
     def reduction_stats(self) -> dict:
         """Per-run reduction % (GNN vs OSPF), then mean +/- SD of that distribution."""
@@ -308,22 +366,37 @@ class MultiSeedAnalyzer:
         n = len(reductions)
         t_crit = stats.t.ppf(0.975, df=n - 1)
         se = np.std(reductions, ddof=1) / np.sqrt(n)
-        return {
+        out = {
             "gnn_vs_ospf": {
-                "per_run_pct": reductions.tolist(),
-                "mean_pct": float(np.mean(reductions)),
-                "sd_pct": float(np.std(reductions, ddof=1)),
-                "ci_lower": float(np.mean(reductions) - t_crit * se),
-                "ci_upper": float(np.mean(reductions) + t_crit * se),
-                "min_pct": float(np.min(reductions)),
-                "max_pct": float(np.max(reductions)),
+                "per_run_pct":  reductions.tolist(),
+                "mean_pct":     float(np.mean(reductions)),
+                "sd_pct":       float(np.std(reductions, ddof=1)),
+                "ci_lower":     float(np.mean(reductions) - t_crit * se),
+                "ci_upper":     float(np.mean(reductions) + t_crit * se),
+                "min_pct":      float(np.min(reductions)),
+                "max_pct":      float(np.max(reductions)),
             },
             "threshold_vs_ospf": {
                 "per_run_pct": thr_reductions.tolist(),
-                "mean_pct": float(np.mean(thr_reductions)),
-                "sd_pct": float(np.std(thr_reductions, ddof=1)),
+                "mean_pct":    float(np.mean(thr_reductions)),
+                "sd_pct":      float(np.std(thr_reductions, ddof=1)),
             },
         }
+        if self.linear_flow_carbon_totals is not None:
+            r = (self.ospf_totals - self.linear_flow_carbon_totals) / self.ospf_totals * 100
+            out["linear_flow_carbon_vs_ospf"] = {
+                "per_run_pct": r.tolist(),
+                "mean_pct":    float(np.mean(r)),
+                "sd_pct":      float(np.std(r, ddof=1)),
+            }
+        if self.nash_game_totals is not None:
+            r = (self.ospf_totals - self.nash_game_totals) / self.ospf_totals * 100
+            out["nash_game_vs_ospf"] = {
+                "per_run_pct": r.tolist(),
+                "mean_pct":    float(np.mean(r)),
+                "sd_pct":      float(np.std(r, ddof=1)),
+            }
+        return out
 
     def block_bootstrap_hourly_ci(
         self, seed_key: int = None, block_size: int = 4, n_boot: int = 2000
@@ -390,9 +463,12 @@ class MultiSeedAnalyzer:
         lines.append(sep)
         for label, key in [
             ("GNN (Ours)", "gnn"),
-            ("OSPF Baseline", "ospf"),
             ("Threshold", "threshold"),
+            ("LinearFlowCarbon", "linear_flow_carbon"),
+            ("NashGame", "nash_game"),
+            ("OSPF Baseline", "ospf"),
         ]:
+            if key not in br: continue
             s = br[key]
             ci_str = f"[{s['ci_lower']:>10.1f}, {s['ci_upper']:>10.1f}]"
             lines.append(
@@ -422,6 +498,12 @@ class MultiSeedAnalyzer:
         lines.append(f"  Range:           [{r['min_pct']:.2f}%, {r['max_pct']:.2f}%]")
         r2 = rd["threshold_vs_ospf"]
         lines.append(f"  Threshold vs OSPF: {r2['mean_pct']:.2f}%  +/-  {r2['sd_pct']:.2f}% SD")
+        if "linear_flow_carbon_vs_ospf" in rd:
+            r3 = rd["linear_flow_carbon_vs_ospf"]
+            lines.append(f"  LinearFlow vs OSPF: {r3['mean_pct']:.2f}%  +/-  {r3['sd_pct']:.2f}% SD")
+        if "nash_game_vs_ospf" in rd:
+            r4 = rd["nash_game_vs_ospf"]
+            lines.append(f"  NashGame vs OSPF: {r4['mean_pct']:.2f}%  +/-  {r4['sd_pct']:.2f}% SD")
 
         # -- C. Hypothesis tests -----------------------------------------------
         lines.append("\nC. HYPOTHESIS TESTS  (paired, same seeds -> same conditions)")
@@ -442,6 +524,22 @@ class MultiSeedAnalyzer:
             f"p = {gnn_thr_t['p_value']:.4e}  "
             f"({'significant' if gnn_thr_t['significant'] else 'NOT significant'}, a=0.05)"
         )
+        if "gnn_vs_linear_flow_carbon" in tt:
+            t3 = tt["gnn_vs_linear_flow_carbon"]
+            lines.append("  Paired t-test (GNN vs LinearFlowCarbon):")
+            lines.append(
+                f"    t({t3['df']}) = {t3['t_statistic']:.4f},  "
+                f"p = {t3['p_value']:.4e}  "
+                f"({'significant' if t3['significant'] else 'NOT significant'}, a=0.05)"
+            )
+        if "gnn_vs_nash_game" in tt:
+            t4 = tt["gnn_vs_nash_game"]
+            lines.append("  Paired t-test (GNN vs NashGame):")
+            lines.append(
+                f"    t({t4['df']}) = {t4['t_statistic']:.4f},  "
+                f"p = {t4['p_value']:.4e}  "
+                f"({'significant' if t4['significant'] else 'NOT significant'}, a=0.05)"
+            )
 
         if "error" not in wx:
             go = wx["gnn_vs_ospf"]
@@ -459,11 +557,16 @@ class MultiSeedAnalyzer:
             "(between-run Cohen's d, Hedges pooled-SD, Sawilowsky 2009)"
         )
         lines.append(sep)
-        for key, label in [
+        keys_eff = [
             ("gnn_vs_ospf", "GNN vs OSPF"),
             ("gnn_vs_threshold", "GNN vs Threshold"),
             ("threshold_vs_ospf", "Threshold vs OSPF"),
-        ]:
+        ]
+        if "gnn_vs_linear_flow_carbon" in eff:
+            keys_eff.append(("gnn_vs_linear_flow_carbon", "GNN vs LinearFlow"))
+        if "gnn_vs_nash_game" in eff:
+            keys_eff.append(("gnn_vs_nash_game", "GNN vs NashGame"))
+        for key, label in keys_eff:
             e = eff[key]
             lines.append(f"  {label:<28}  d = {e['d']:+.4f}  ({e['label']})")
         lines.append(
@@ -478,8 +581,16 @@ class MultiSeedAnalyzer:
         lines.append(sep)
         wo = wr["gnn_vs_ospf"]
         wt = wr["gnn_vs_threshold"]
+        lines.append(f"  GNN beat OSPF:       {wo['wins']}/{wo['total_runs']} runs  "
+                     f"({wo['win_rate_pct']:.1f}%)")
         lines.append(f"  GNN beat Threshold:  {wt['wins']}/{wt['total_runs']} runs  "
                      f"({wt['win_rate_pct']:.1f}%)")
+        if "gnn_vs_linear_flow_carbon" in wr:
+            wl = wr["gnn_vs_linear_flow_carbon"]
+            lines.append(f"  GNN beat LinearFlow: {wl['wins']}/{wl['total_runs']} runs  ({wl['win_rate_pct']:.1f}%)")
+        if "gnn_vs_nash_game" in wr:
+            wn = wr["gnn_vs_nash_game"]
+            lines.append(f"  GNN beat NashGame:   {wn['wins']}/{wn['total_runs']} runs  ({wn['win_rate_pct']:.1f}%)")
 
         lines.append("\n" + SEP)
         return "\n".join(lines)
@@ -501,13 +612,13 @@ class MultiSeedAnalyzer:
             plt.rcParams['font.family'] = 'DejaVu Sans'
             from matplotlib.patches import Patch
         except ImportError:
-            print("matplotlib not available — skipping plots")
+            print("matplotlib not available â€” skipping plots")
             return []
 
         os.makedirs(output_dir, exist_ok=True)
         saved = []
 
-        # ── Color palette ──────────────────────────────────────────────
+        # â”€â”€ Color palette â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         BG    = "#ffffff"
         CARD  = "#ffffff"
         BORDER= "#d4d4d4"
@@ -517,6 +628,8 @@ class MultiSeedAnalyzer:
         GRN   = "#16a34a"
         RED   = "#dc2626"
         AMB   = "#d97706"
+        BLU   = "#2563eb"
+        PUR   = "#9333ea"
 
         rd = self.reduction_stats()
         br = self.between_run_stats()
@@ -535,9 +648,22 @@ class MultiSeedAnalyzer:
         ax.spines["left"].set_color(BORDER)
         ax.tick_params(colors=TXT_M, labelsize=9)
 
-        data_groups = [self.gnn_totals, self.threshold_totals, self.ospf_totals]
-        labels_box  = ["GNN\n(Ours)", "Threshold\n(Top-25%)", "OSPF\n(Baseline)"]
-        colors_box  = [GRN, AMB, RED]
+        data_groups = [self.gnn_totals, self.threshold_totals]
+        labels_box  = ["GNN\n(Ours)", "Threshold\n(Top-25%)"]
+        colors_box  = [GRN, AMB]
+        
+        if self.linear_flow_carbon_totals is not None:
+            data_groups.append(self.linear_flow_carbon_totals)
+            labels_box.append("LinearFlow\n(El-Zahr)")
+            colors_box.append(BLU)
+        if self.nash_game_totals is not None:
+            data_groups.append(self.nash_game_totals)
+            labels_box.append("NashGame\n(Hogade)")
+            colors_box.append(PUR)
+            
+        data_groups.append(self.ospf_totals)
+        labels_box.append("OSPF\n(Baseline)")
+        colors_box.append(RED)
 
         bp = ax.boxplot(
             data_groups, patch_artist=True, widths=0.4,
@@ -561,7 +687,7 @@ class MultiSeedAnalyzer:
         ax.set_xticklabels(labels_box, fontsize=10, color=TXT)
         ax.set_ylabel("Total Carbon per Run (gCO2)", fontsize=10, color=TXT2)
         ax.set_title(
-            f"Per-Run Total Carbon — {self.n_runs} Independent Seeds\n"
+            f"Per-Run Total Carbon â€” {self.n_runs} Independent Seeds\n"
             f"GNN vs OSPF: d = {eff['gnn_vs_ospf']['d']:.2f} ({eff['gnn_vs_ospf']['label']}), "
             f"p = {tt['gnn_vs_ospf']['p_value']:.3e} (paired t-test)",
             fontsize=11, color=TXT, pad=10, loc="left",
@@ -570,7 +696,7 @@ class MultiSeedAnalyzer:
 
         legend_patches = [
             Patch(facecolor=c, alpha=0.75, label=l)
-            for c, l in zip(colors_box, ["GNN (Ours)", "Threshold", "OSPF Baseline"])
+            for c, l in zip(colors_box, [l.replace("\n", " ") for l in labels_box])
         ]
         ax.legend(handles=legend_patches, fontsize=8, framealpha=0.9,
                   edgecolor=BORDER, facecolor=CARD, labelcolor=TXT2)
@@ -582,7 +708,7 @@ class MultiSeedAnalyzer:
         saved.append(p)
 
         # ----------------------------------------------------------
-        # Plot 2: Error-bar chart of mean ± 95% CI per method
+        # Plot 2: Error-bar chart of mean Â± 95% CI per method
         # ----------------------------------------------------------
         fig, ax = plt.subplots(figsize=(8, 5), facecolor=BG)
         ax.set_facecolor(CARD)
@@ -592,9 +718,22 @@ class MultiSeedAnalyzer:
         ax.spines["left"].set_color(BORDER)
         ax.tick_params(colors=TXT_M, labelsize=9)
 
-        methods_eb  = ["GNN\n(Ours)", "Threshold\n(Top-25%)", "OSPF\n(Baseline)"]
-        keys_eb     = ["gnn", "threshold", "ospf"]
-        colors_eb   = [GRN, AMB, RED]
+        methods_eb  = ["GNN\n(Ours)", "Threshold\n(Top-25%)"]
+        keys_eb     = ["gnn", "threshold"]
+        colors_eb   = [GRN, AMB]
+        
+        if self.linear_flow_carbon_totals is not None:
+            methods_eb.append("LinearFlow\n(El-Zahr)")
+            keys_eb.append("linear_flow_carbon")
+            colors_eb.append(BLU)
+        if self.nash_game_totals is not None:
+            methods_eb.append("NashGame\n(Hogade)")
+            keys_eb.append("nash_game")
+            colors_eb.append(PUR)
+            
+        methods_eb.append("OSPF\n(Baseline)")
+        keys_eb.append("ospf")
+        colors_eb.append(RED)
         means_eb    = [br[k]["mean"] for k in keys_eb]
         errors_low  = [br[k]["mean"] - br[k]["ci_lower"] for k in keys_eb]
         errors_high = [br[k]["ci_upper"] - br[k]["mean"] for k in keys_eb]
@@ -614,7 +753,7 @@ class MultiSeedAnalyzer:
 
         ax.set_ylabel("Mean Total Carbon per Run (gCO2)", fontsize=10, color=TXT2)
         ax.set_title(
-            f"Mean ± 95% CI  ({self.n_runs} runs)\n"
+            f"Mean Â± 95% CI  ({self.n_runs} runs)\n"
             f"GNN reduction: {rd['gnn_vs_ospf']['mean_pct']:.1f}% "
             f"[{rd['gnn_vs_ospf']['ci_lower']:.1f}%, {rd['gnn_vs_ospf']['ci_upper']:.1f}%]",
             fontsize=11, fontweight="bold", color=TXT, pad=10, loc="left",
@@ -694,12 +833,12 @@ class MultiSeedAnalyzer:
             ) + (
                 f", {self.num_nodes} nodes (base)" if self.num_nodes else ""
             )),
-            ("Design", "Paired (same seed → same conditions)"),
+            ("Design", "Paired (same seed â†’ same conditions)"),
             ("", ""),
-            ("GNN MEAN TOTAL CARBON", f"{br['gnn']['mean']:,.1f} ± {br['gnn']['sd']:,.1f} gCO2"),
-            ("OSPF MEAN TOTAL CARBON", f"{br['ospf']['mean']:,.1f} ± {br['ospf']['sd']:,.1f} gCO2"),
+            ("GNN MEAN TOTAL CARBON", f"{br['gnn']['mean']:,.1f} Â± {br['gnn']['sd']:,.1f} gCO2"),
+            ("OSPF MEAN TOTAL CARBON", f"{br['ospf']['mean']:,.1f} Â± {br['ospf']['sd']:,.1f} gCO2"),
             ("", ""),
-            ("Mean Reduction", f"{red['mean_pct']:.2f}%  ±  {red['sd_pct']:.2f}% SD"),
+            ("Mean Reduction", f"{red['mean_pct']:.2f}%  Â±  {red['sd_pct']:.2f}% SD"),
             ("95% CI (reduction)", f"[{red['ci_lower']:.2f}%, {red['ci_upper']:.2f}%]"),
             ("Win Rate (GNN < OSPF)", f"{wr_go['wins']}/{self.n_runs}  ({wr_go['win_rate_pct']:.0f}%)"),
             ("", ""),

@@ -31,7 +31,7 @@ simulation:
 
 gnn:
   model_type: "GAT"
-  node_features: 7
+  node_features: 13
   edge_features: 3
   hidden_dim: 128
   num_layers: 3
@@ -50,6 +50,58 @@ loss:
   carbon_weight: 1.0
   latency_weight: 0.3
   qos_weight: 0.2
+
+# ── Routing weight blend (GNN controller) ──────────────────────────────────
+# combined = carbon_weight * carbon_norm
+#          + gnn_weight    * gnn_norm
+#          + load_weight   * load_norm
+routing:
+  carbon_weight: 0.65
+  gnn_weight: 0.20
+  load_weight: 0.15
+  # OSPF-style link metric range: weight_i = 1 + (max_link_weight - 1) * combined_i
+  max_link_weight: 10000
+  # ThresholdCarbonController parameters
+  threshold:
+    hop_cost: 10000       # base cost per hop
+    dirty_penalty: 3000   # extra penalty on links touching top-25% carbon nodes
+    dirty_percentile: 75  # percentile above which a node is "dirty"
+
+# ── Power model (El-Zahr & Zilberman, ACM SIGMETRICS 2025) ─────────────────
+# "From Measurement to Emissions: Assessing the Carbon Footprint of Traffic Flows"
+# Switch power: P = idle_watts + alpha_w_per_tbps * throughput_tbps
+#                             + beta_w_per_mpps  * pkt_rate_mpps
+# Per-flow energy: e_f = alpha_prime * bytes_f + beta_prime * packets_f
+#   alpha_prime = alpha_w_per_tbps * 8e-12  (J/byte)
+#   beta_prime  = beta_w_per_mpps  * 1e-6   (J/packet)
+power_model:
+  # Single idle_power used by NetworkEnergyManager.calculate_carbon_with_traffic()
+  # Previously was duplicated as 50W (constructor) and 10W (method) -- now unified here
+  idle_power_watts: 134.1
+  # Traffic-dependent power per Gbps (fallback for non-Paper1 controllers)
+  traffic_power_per_gbps: 500.0
+  # Measured switch parameters — Table 4 of El-Zahr & Zilberman 2025
+  paper1_switches:
+    switch_1:
+      idle_watts: 134.1
+      alpha_w_per_tbps: 10.69
+      beta_w_per_mpps:  0.0054
+    switch_2:
+      idle_watts: 181.6
+      alpha_w_per_tbps: 5.16
+      beta_w_per_mpps:  0.0038
+    switch_3:
+      idle_watts: 235.9
+      alpha_w_per_tbps: 16.56
+      beta_w_per_mpps:  0.0441
+  default_switch: "switch_1"
+
+# ── Nash Equilibrium controller (Hogade et al., IEEE) ──────────────────────
+# "Reducing Carbon Footprint of AI Inference Workloads for Geo-Distributed DCs"
+nash:
+  max_iterations: 50       # Best-Reply iteration cap
+  convergence_tol: 1.0e-4  # Stop when max strategy change < this
+  min_fraction: 0.01       # Min traffic fraction per node (avoids zero-load starvation)
 
 output:
   save_results: true

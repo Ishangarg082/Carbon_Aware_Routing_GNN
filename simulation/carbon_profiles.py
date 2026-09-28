@@ -164,49 +164,54 @@ class CarbonIntensityManager:
 def create_multi_region_profiles(num_nodes, num_regions=3):
     """
     Create carbon profiles with high regional diversity for better training.
-    
-    This creates dramatic differences in carbon intensity across regions,
-    enabling significant carbon savings through intelligent routing.
-    
-    Args:
-        num_nodes: Total number of nodes
-        num_regions: Number of regions (default 3)
-        
-    Returns:
-        CarbonIntensityManager with diverse regional profiles
-        
+
+    .. deprecated::
+        This function generates base intensities with ``np.random.uniform`` and
+        is therefore purely synthetic (not data-driven).  Prefer
+        ``CSVDrivenProfileManager`` when ``carbon_network_data.csv`` is available,
+        or ``create_realistic_profiles()`` which also uses the CSV.
+
+        This function is retained only for back-compat with external callers and
+        will raise a ``DeprecationWarning`` to make the synthetic origin visible.
+
     Region characteristics:
     - Region 1 (clean): 50-150 gCO2/kWh (solar/wind heavy, e.g., Iceland, Norway)
     - Region 2 (medium): 200-400 gCO2/kWh (mixed grid, e.g., California, UK)
     - Region 3 (dirty): 500-800 gCO2/kWh (coal heavy, e.g., Poland, China)
     """
+    import warnings
+    warnings.warn(
+        "create_multi_region_profiles() generates synthetic carbon intensities "
+        "using np.random.uniform. Use CSVDrivenProfileManager or "
+        "create_realistic_profiles() for data-driven profiles.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+
     manager = CarbonIntensityManager()
-    
+
     # Assign nodes to regions
     nodes_per_region = num_nodes // num_regions
-    
+
     for node_id in range(num_nodes):
         region = min(node_id // nodes_per_region, num_regions - 1)
-        
+
         if region == 0:  # Clean energy region
             base_intensity = np.random.uniform(50, 150)
         elif region == 1:  # Medium carbon region
             base_intensity = np.random.uniform(200, 400)
         else:  # High carbon region
             base_intensity = np.random.uniform(500, 800)
-        
+
         # Add realistic time-of-day variation (±30%)
-        # Solar peaks at noon, wind more constant, coal/gas adjust for demand
         hourly_pattern = []
         for hour in range(24):
-            # Sinusoidal pattern with peak at noon for solar
             time_factor = 1 + 0.3 * np.sin((hour - 6) * np.pi / 12)
-            # Add some randomness
             time_factor *= np.random.uniform(0.95, 1.05)
             hourly_pattern.append(base_intensity * time_factor)
-        
+
         manager.add_node_profile(node_id, hourly_pattern)
-    
+
     return manager
 
 

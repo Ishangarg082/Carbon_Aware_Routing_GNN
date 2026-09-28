@@ -86,23 +86,40 @@ class NetworkTopology:
     
     def _create_scale_free(self):
         rng_seed = int(np.random.randint(0, 2**31))
-        self.graph = nx.barabasi_albert_graph(self.num_nodes, m=np.random.randint(2, 5), seed=rng_seed)
+        # m = edges added per new node (Barabasi-Albert).
+        # Cap m at 4 to keep edge count O(4N) — consistent with small_world k=8
+        # (average degree = 2m, so m=4 -> avg degree 8).
+        m = np.random.randint(2, 5)  # 2, 3, or 4
+        self.graph = nx.barabasi_albert_graph(self.num_nodes, m=m, seed=rng_seed)
         self.positions = nx.spring_layout(self.graph, seed=rng_seed)
     
     def _create_small_world(self):
         rng_seed = int(np.random.randint(0, 2**31))
-        k = max(4, np.random.randint(4, max(5, self.num_nodes // 4)))
+        # k = neighbour count in the ring lattice before rewiring.
+        # Cap at 8 to bound edge count: N=200, k=8 -> 800 edges max.
+        # Without the cap: k=max(4, randint(4, N//4)) -> k up to 50 for N=200
+        # -> 5000 edges -> PopulateRoutingTables runs Dijkstra for minutes.
+        k = min(8, max(4, np.random.randint(4, max(5, self.num_nodes // 10))))
         p_rewire = np.random.uniform(0.1, 0.5)   # rewiring probability varies per seed
         self.graph = nx.watts_strogatz_graph(self.num_nodes, k, p=p_rewire, seed=rng_seed)
         self.positions = nx.circular_layout(self.graph)
     
     def _create_random(self):
         rng_seed = int(np.random.randint(0, 2**31))
-        p = np.random.uniform(0.05, 0.15) + np.log(self.num_nodes) / self.num_nodes
+        # Derive p from a target AVERAGE DEGREE of 8 (matching small_world k=8 cap).
+        # Old formula: p = uniform(0.05, 0.15) + log(N)/N
+        #   -> for N=350: p ≈ 0.05 + 0.017 = 0.067 -> 3065 edges -> hangs.
+        # New formula: p = target_degree / (N-1) with small variation
+        #   -> for N=350: p = 8/349 ≈ 0.023 -> ~1400 edges -> fast.
+        target_degree = np.random.uniform(6.0, 8.0)   # average degree 6-8
+        p = target_degree / max(self.num_nodes - 1, 1)
+        p *= np.random.uniform(0.9, 1.1)              # +/-10% variation
+        p = min(p, 0.08)                              # hard cap just in case
+        p = max(p, 2.0 / max(self.num_nodes - 1, 1)) # at least 2 edges/node avg
         self.graph = nx.erdos_renyi_graph(self.num_nodes, p, seed=rng_seed)
         attempts = 0
         while not nx.is_connected(self.graph) and attempts < 20:
-            p += 0.05
+            p = min(p * 1.3, 0.15)  # bump up gently; hard cap at 0.15
             rng_seed += 1
             self.graph = nx.erdos_renyi_graph(self.num_nodes, p, seed=rng_seed)
             attempts += 1

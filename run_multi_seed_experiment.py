@@ -9,9 +9,18 @@ Each seed controls:
   - node-to-carbon-profile assignment (which nodes are coal vs solar)
   - any other stochastic elements in the simulation pipeline
 
-All three controllers (GNN, OSPF baseline, Threshold) share the same seed
-within each run, so the design is *paired* — ideal for a paired t-test /
-Wilcoxon signed-rank test.
+All five controllers share the same seed within each run, so the design is
+*paired* — ideal for a paired t-test / Wilcoxon signed-rank test.
+
+Controllers
+-----------
+  1. GNN (ours)                   -- Carbon-Aware GAT routing
+  2. OSPF Baseline                -- Shortest-path (hop count)
+  3. ThresholdCarbonController    -- Dirty-node avoidance (config-driven)
+  4. LinearFlowCarbonController   -- El-Zahr & Zilberman (ACM SIGMETRICS 2025)
+                                     Linear power model: e_f = alpha'*bytes + beta'*pkts
+  5. NashGameController           -- Hogade et al. (IEEE)
+                                     Nash equilibrium Best-Reply game-theoretic routing
 
 Usage
 -----
@@ -39,6 +48,8 @@ from simulation.gnn_routing_controller import (
     RoutingController,
     BaselineController,
     ThresholdCarbonController,
+    LinearFlowCarbonController,
+    NashGameController,
 )
 from enhanced_gnn_model import CarbonAwareGAT
 from visualization.multi_seed_analyzer import MultiSeedAnalyzer
@@ -82,9 +93,9 @@ def _run_one_seed(
 
     Per-seed variation:
       - Topology type  : hierarchical / scale_free / small_world / random
-      - Node count     : ±20 % of the base value (minimum 10)
-      - Base bandwidth : 500 – 2000 Mbps
-      - Delay scale    : 50 – 200 ms/unit-distance
+      - Node count     : Â±20 % of the base value (minimum 10)
+      - Base bandwidth : 500 â€“ 2000 Mbps
+      - Delay scale    : 50 â€“ 200 ms/unit-distance
       - Carbon profile : clustered / geographic / random
 
     All three controllers (GNN, OSPF, Threshold) share the same seed &
@@ -92,7 +103,7 @@ def _run_one_seed(
     """
     duration_s = duration_hours * 3600
 
-    # ── Seed-controlled stochastic elements ──────────────────────────
+    # â”€â”€ Seed-controlled stochastic elements â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     np.random.seed(seed)
     torch.manual_seed(seed)
 
@@ -100,7 +111,7 @@ def _run_one_seed(
     topology_choices = ["hierarchical", "scale_free", "small_world", "random"]
     topology_type = topology_choices[seed % len(topology_choices)]
 
-    # 2. Randomise node count ±20 % of the base (minimum 10)
+    # 2. Randomise node count Â±20 % of the base (minimum 10)
     node_variation = np.random.randint(-max(0, num_nodes // 5), num_nodes // 5 + 1)
     actual_nodes = max(10, num_nodes + node_variation)
 
@@ -132,26 +143,44 @@ def _run_one_seed(
               f"nodes={actual_nodes}, bw={base_bw}Mbps, "
               f"delay_scale={delay_scale}, profile={profile_type}")
 
-    # ── GNN controller ────────────────────────────────────────────────
+    # â”€â”€ GNN controller â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     gnn_ctrl = RoutingController(
         model, topology, carbon_mgr, energy_mgr,
         control_interval=3600, use_ns3=False, seed=seed,
     )
     gnn_res = gnn_ctrl.run_control_loop(duration_s)
 
-    # ── Baseline (OSPF shortest path) ─────────────────────────────────
+    # â”€â”€ Baseline (OSPF shortest path) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     bl_ctrl = BaselineController(
         topology, carbon_mgr, energy_mgr,
         control_interval=3600, seed=seed,
     )
     bl_res = bl_ctrl.run_control_loop(duration_s)
 
-    # ── Threshold carbon avoidance ────────────────────────────────────
+    # â”€â”€ Threshold carbon avoidance â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     thr_ctrl = ThresholdCarbonController(
         topology, carbon_mgr, energy_mgr,
         control_interval=3600, seed=seed,
     )
     thr_res = thr_ctrl.run_control_loop(duration_s)
+
+    # â”€â”€ Paper 1 baseline: El-Zahr & Zilberman (ACM SIGMETRICS 2025) â”€â”€â”€
+    # "From Measurement to Emissions: Assessing the Carbon Footprint
+    #  of Traffic Flows" â€” linear switch power model routing
+    p1_ctrl = LinearFlowCarbonController(
+        topology, carbon_mgr, energy_mgr,
+        control_interval=3600, seed=seed,
+    )
+    p1_res = p1_ctrl.run_control_loop(duration_s)
+
+    # â”€â”€ Paper 2 baseline: Hogade et al. (IEEE) â€” Nash Equilibrium â”€â”€â”€â”€â”€
+    # "Reducing Carbon Footprint of AI Inference Workloads for
+    #  Geographically Distributed Data Centers" â€” Best-Reply Nash game
+    nash_ctrl = NashGameController(
+        topology, carbon_mgr, energy_mgr,
+        control_interval=3600, seed=seed,
+    )
+    nash_res = nash_ctrl.run_control_loop(duration_s)
 
     return {
         "seed": seed,
@@ -173,6 +202,14 @@ def _run_one_seed(
             "total_carbon": float(thr_res["total_carbon"]),
             "carbon_history": [float(v) for v in thr_res["carbon_history"]],
         },
+        "linear_flow_carbon": {
+            "total_carbon": float(p1_res["total_carbon"]),
+            "carbon_history": [float(v) for v in p1_res["carbon_history"]],
+        },
+        "nash_game": {
+            "total_carbon": float(nash_res["total_carbon"]),
+            "carbon_history": [float(v) for v in nash_res["carbon_history"]],
+        },
     }
 
 
@@ -193,18 +230,18 @@ def run_multi_seed_experiment(
 
     Parameters
     ----------
-    n_seeds        : number of independent seeds (≥10 recommended)
+    n_seeds        : number of independent seeds (â‰¥10 recommended)
     num_nodes      : nodes in each run's topology
     duration_hours : simulation duration per run in hours
     results_dir    : where to write output files
-    seed_start     : first seed value (seeds = seed_start … seed_start+n_seeds-1)
+    seed_start     : first seed value (seeds = seed_start â€¦ seed_start+n_seeds-1)
     verbose        : print per-seed details
     """
     os.makedirs(results_dir, exist_ok=True)
     seeds = list(range(seed_start, seed_start + n_seeds))
 
     print("=" * 70)
-    print("  MULTI-SEED EXPERIMENT — CARBON-AWARE ROUTING")
+    print("  MULTI-SEED EXPERIMENT â€” CARBON-AWARE ROUTING")
     print("=" * 70)
     print(f"  Seeds:         {seeds}")
     print(f"  Nodes:         {num_nodes}")
@@ -219,7 +256,7 @@ def run_multi_seed_experiment(
     status = "pre-trained weights" if loaded else "random initialization"
     print(f"  Model ready ({status})\n")
 
-    # ── Run each seed ─────────────────────────────────────────────────
+    # â”€â”€ Run each seed â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     per_seed_results = {}
     wall_times = []
 
@@ -242,7 +279,7 @@ def run_multi_seed_experiment(
     print(f"\nAll {n_seeds} runs complete.  Total wall time: {total_wall:.1f}s  "
           f"(avg {total_wall/n_seeds:.1f}s/run)\n")
 
-    # ── Statistical analysis ──────────────────────────────────────────
+    # â”€â”€ Statistical analysis â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     print("Computing multi-seed statistics...")
     analyzer = MultiSeedAnalyzer(per_seed_results, duration_hours=duration_hours, num_nodes=num_nodes)
 
@@ -294,7 +331,7 @@ def run_multi_seed_experiment(
     for p in saved_plots:
         print(f"  Saved: {p}")
 
-    # ── Quick sanity-check printout ───────────────────────────────────
+    # â”€â”€ Quick sanity-check printout â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     tt = analyzer.paired_ttest()
     eff = analyzer.cohens_d_between_runs()
     wr = analyzer.win_rate()
@@ -304,7 +341,7 @@ def run_multi_seed_experiment(
     print("  SUMMARY")
     print("=" * 70)
     print(f"  Mean reduction (GNN vs OSPF): {rd['gnn_vs_ospf']['mean_pct']:.2f}% "
-          f"± {rd['gnn_vs_ospf']['sd_pct']:.2f}% SD")
+          f"Â± {rd['gnn_vs_ospf']['sd_pct']:.2f}% SD")
     print(f"  95% CI: [{rd['gnn_vs_ospf']['ci_lower']:.2f}%, {rd['gnn_vs_ospf']['ci_upper']:.2f}%]")
     print(f"  Paired t-test: t({tt['gnn_vs_ospf']['df']}) = {tt['gnn_vs_ospf']['t_statistic']:.3f}, "
           f"p = {tt['gnn_vs_ospf']['p_value']:.3e}")
@@ -334,7 +371,7 @@ def _parse_args():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Full paper-quality run (15 seeds, 48 h, 200 nodes) — ~5 min on a laptop
+  # Full paper-quality run (15 seeds, 48 h, 200 nodes) â€” ~5 min on a laptop
   python run_multi_seed_experiment.py
 
   # Quick smoke-test (5 seeds, 12 h, 50 nodes)
@@ -356,6 +393,17 @@ Examples:
                    help="Output directory (default: results/)")
     p.add_argument("--verbose", action="store_true",
                    help="Print per-seed topology details")
+    p.add_argument(
+        "--ns3", action="store_true", default=False,
+        help=(
+            "Route all 5 controllers through real ns-3 (must run in WSL with "
+            "ns-3.48 installed). Default: pure-Python simulation."
+        ),
+    )
+    p.add_argument(
+        "--netanim", action="store_true", default=False,
+        help="Generate NetAnim XML for seed 1 (only used with --ns3).",
+    )
     return p.parse_args()
 
 
@@ -369,11 +417,24 @@ if __name__ == "__main__":
         print(f"WARNING: {args.seeds} seeds is below the recommended minimum (10).")
         print("         Results will have low statistical power.  Use --seeds 15 for paper.")
 
-    run_multi_seed_experiment(
-        n_seeds=args.seeds,
-        num_nodes=args.nodes,
-        duration_hours=args.hours,
-        results_dir=args.results_dir,
-        seed_start=args.seed_start,
-        verbose=args.verbose,
-    )
+    if args.ns3:
+        # Route through real ns-3 -- delegates to run_ns3_demo.run_ns3_experiment()
+        from run_ns3_demo import run_ns3_experiment
+        run_ns3_experiment(
+            n_seeds=args.seeds,
+            num_nodes=args.nodes,
+            duration_hours=args.hours,
+            enable_netanim=args.netanim,
+            seed_start=args.seed_start,
+            verbose=args.verbose,
+        )
+    else:
+        # Pure-Python simulation (default -- fast, no ns-3 required)
+        run_multi_seed_experiment(
+            n_seeds=args.seeds,
+            num_nodes=args.nodes,
+            duration_hours=args.hours,
+            results_dir=args.results_dir,
+            seed_start=args.seed_start,
+            verbose=args.verbose,
+        )

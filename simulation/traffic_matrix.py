@@ -229,7 +229,7 @@ def distribute_traffic_by_routing(
     routed_flows = []
     
     # Create weighted graph for routing
-    weighted_graph = topology_graph.copy()
+    weighted_graph = nx.DiGraph(topology_graph)
     
     # Apply link weights to graph
     for idx in range(edge_index.shape[1]):

@@ -87,24 +87,26 @@ class NetAnimHelper:
         return self.anim
     
     def set_node_positions(self, topology):
-        """Set node positions for NetAnim visualization"""
-        if not self.anim:
-            raise RuntimeError("NetAnim not initialized")
-        
+        """Set node positions for NetAnim visualization using MobilityHelper"""
         positions = topology['positions']
         
         scale_x = 1000
         scale_y = 800
         
-        for node_id, (x, y) in positions.items():
-            scaled_x = x * scale_x
-            scaled_y = y * scale_y
-            
-            self.anim.SetConstantPosition(
-                ns.NodeContainer.GetGlobal().Get(node_id),
-                scaled_x,
-                scaled_y
-            )
+        mobility = ns.MobilityHelper()
+        positionAlloc = ns.ListPositionAllocator()
+        
+        nodes = ns.NodeContainer.GetGlobal()
+        for i in range(nodes.GetN()):
+            if i in positions:
+                x, y = positions[i]
+                positionAlloc.Add(ns.Vector(x * scale_x, y * scale_y, 0.0))
+            else:
+                positionAlloc.Add(ns.Vector(0.0, 0.0, 0.0))
+                
+        mobility.SetPositionAllocator(positionAlloc)
+        mobility.SetMobilityModel("ns3::ConstantPositionMobilityModel")
+        mobility.Install(nodes)
     
     def set_carbon_aware_colors(self, carbon_assignments):
         """Color nodes based on their carbon profile"""
@@ -114,15 +116,9 @@ class NetAnimHelper:
         for node_id, profile_name in carbon_assignments.items():
             color = self.config.node_colors.get(profile_name, (128, 128, 128))
             
-            self.anim.UpdateNodeColor(
-                ns.NodeContainer.GetGlobal().Get(node_id),
-                color[0], color[1], color[2]
-            )
-            
-            self.anim.UpdateNodeDescription(
-                ns.NodeContainer.GetGlobal().Get(node_id),
-                f"Node {node_id} ({profile_name})"
-            )
+            # Use the uint32_t nodeId overload to avoid Ptr<Node> conversion issues in cppyy
+            self.anim.UpdateNodeColor(int(node_id), color[0], color[1], color[2])
+            self.anim.UpdateNodeDescription(int(node_id), f"Node {node_id} ({profile_name})")
     
     def set_node_sizes(self, node_types):
         """Set node sizes based on their role (core/aggregation/access)"""
@@ -131,11 +127,8 @@ class NetAnimHelper:
         
         for node_id, node_type in node_types.items():
             size = self.config.node_sizes.get(node_type, 35)
-            
-            self.anim.UpdateNodeSize(
-                ns.NodeContainer.GetGlobal().Get(node_id),
-                size, size
-            )
+            # Use the uint32_t nodeId overload
+            self.anim.UpdateNodeSize(int(node_id), size, size)
     
     def add_route_update_marker(self, timestamp, num_routes_changed):
         """Add a text annotation when routes are updated by GNN"""

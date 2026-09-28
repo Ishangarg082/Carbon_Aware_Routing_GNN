@@ -181,22 +181,28 @@ class CarbonAwareRoutingController:
         """
         routing_decisions = []
         total_carbon = 0
-        
-        for src, dst, demand, protocol in traffic_flows:
+
+        for src, dst, demand, protocol, flow_feat in traffic_flows:
             if src == dst:
                 continue
-            
-            # Estimate flow characteristics
-            # Simple heuristic: demand → bytes/packets
-            duration_sec = 60  # Assume 1-minute flow
-            byte_count = demand * 1e9 / 8 * duration_sec  # Gbps to bytes
-            packet_count = int(byte_count / 1500)  # Assume 1500 byte packets
-            
+
+            # Use real flow characteristics from the CSV (via flow_feat dict)
+            # flow_duration is in milliseconds in the CSV; convert to seconds
+            duration_sec = float(flow_feat.get('flow_duration', 1000.0)) / 1000.0
+            if duration_sec <= 0:
+                duration_sec = 1.0   # guard against zero
+
+            byte_count   = float(flow_feat.get('byte_count',
+                                 demand * 1e9 / 8 * duration_sec))
+            packet_count = int(flow_feat.get('packet_count',
+                                int(byte_count / 1500)))
+
             flow_info = {
                 'packet_count': packet_count,
-                'byte_count': byte_count,
-                'protocol': protocol,
-                'cpu_usage': 50.0  # Default assumption
+                'byte_count':   byte_count,
+                'flow_duration': duration_sec * 1000,  # keep ms for MLP feature
+                'protocol':     protocol,
+                'cpu_usage':    float(flow_feat.get('cpu_usage', 50.0)),
             }
             
             route = self.select_route(graph, src, dst, flow_info)

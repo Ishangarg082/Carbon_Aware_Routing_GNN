@@ -17,3 +17,13 @@ Thumbs.db
 *.log
 results/
 training/data/
+
+# Documents and reports
+*.pdf
+*.docx
+~$*
+papers_extracted.txt
+
+# Backups and scratch
+result_backup/
+scratch/
